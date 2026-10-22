@@ -217,21 +217,27 @@
 
   <header class="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 shadow-xs">
     <div class="max-w-7xl mx-auto px-4 py-3.5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <!-- Sisi Kiri: Logo & Tajuk -->
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-lg shadow-xs">
+          <div class="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-xl shadow-xs">
             🩺
           </div>
+          <div>
             <div class="flex items-center gap-2">
               <h1 class="text-lg font-bold text-slate-900">List Pasien Mawar</h1>
-              <span id="sync-indicator" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">Connecting...</span>
+              <span id="sync-indicator" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Live Synced</span>
             </div>
             <p class="text-xs text-slate-500">Tracking & Operan Jaga Rawat Inap by DM Obgyn</p>
           </div>
         </div>
-        <button onclick="openModal()" class="md:hidden bg-emerald-600 text-white font-semibold text-xs px-3 py-2 rounded-xl">+ Pasien</button>
+        <!-- Butang Tambah Pasien untuk Paparan Skrin Telefon -->
+        <button onclick="openModal()" class="md:hidden bg-emerald-600 text-white font-semibold text-xs px-3 py-2 rounded-xl">
+          + Pasien
+        </button>
       </div>
 
+      <!-- Sisi Kanan: Tab Aktif/KRS & Butang Tindakan -->
       <div class="flex items-center gap-2">
         <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-medium">
           <button onclick="setStatusFilter('Aktif Rawat')" id="tab-aktif" class="px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs">
@@ -243,6 +249,13 @@
         </div>
         <button onclick="copyHandoff()" class="px-3 py-2 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl shadow-xs">
           Salin Operan
+        </button>
+        <button onclick="openModal()" class="hidden md:inline-flex bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs">
+          + Tambah Pasien
+        </button>
+      </div>
+    </div>
+  </header>
         </button>
         <button onclick="openModal()" class="hidden md:inline-flex bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs">
           + Tambah Pasien
