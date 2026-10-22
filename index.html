@@ -3,30 +3,232 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WardTracker - Tracking & Handoff Pasien</title>
+  <title>WardTracker - Realtime Multi-Device</title>
   <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Firebase SDK Modular -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { 
+      getFirestore, 
+      collection, 
+      addDoc, 
+      updateDoc, 
+      deleteDoc, 
+      doc, 
+      onSnapshot 
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    // KUNCI FIREBASE KAMU:
+    const firebaseConfig = {
+      apiKey: "AIzaSyDfYW0-lvnz7jgMD6atXV6WiAF0m_p5i_8",
+      authDomain: "ward-tracker-9d44f.firebaseapp.com",
+      projectId: "ward-tracker-9d44f",
+      storageBucket: "ward-tracker-9d44f.firebasestorage.app",
+      messagingSenderId: "275444842239",
+      appId: "1:275444842239:web:d627862e33c7fbffc1d6ca",
+      measurementId: "G-GSG94X1PLD"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const colRef = collection(db, "ward_patients");
+
+    let patients = [];
+    let currentStatus = 'Aktif Rawat';
+    let currentQuery = '';
+    let currentDpjp = 'Semua';
+
+    // Listener Real-Time: Perubahan di HP langsung update di PC secara instan
+    onSnapshot(colRef, (snapshot) => {
+      patients = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      const badge = document.getElementById('sync-indicator');
+      if (badge) {
+        badge.textContent = 'Live Synced';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+      }
+      render();
+    }, (err) => {
+      console.error("Firestore Error:", err);
+      const badge = document.getElementById('sync-indicator');
+      if (badge) {
+        badge.textContent = 'Gagal Sync';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-700 border border-red-200';
+      }
+    });
+
+    window.savePatient = async function(e) {
+      e.preventDefault();
+      const id = document.getElementById('edit-id').value;
+      const data = {
+        nama: document.getElementById('input-nama').value.trim(),
+        noRm: document.getElementById('input-norm').value.trim(),
+        kamar: document.getElementById('input-kamar').value.trim(),
+        dpjp: document.getElementById('input-dpjp').value.trim() || 'DPJP Umum',
+        diagnosis: document.getElementById('input-dx').value.trim() || '-',
+        status: document.getElementById('input-status').value,
+        updatedAt: Date.now()
+      };
+
+      try {
+        if (id) {
+          await updateDoc(doc(db, "ward_patients", id), data);
+        } else {
+          await addDoc(colRef, { ...data, createdAt: Date.now() });
+        }
+        closeModal();
+      } catch (error) {
+        alert("Gagal menyimpan data: " + error.message);
+      }
+    };
+
+    window.toggleStatus = async function(id, current) {
+      const next = current === 'Aktif Rawat' ? 'KRS' : 'Aktif Rawat';
+      await updateDoc(doc(db, "ward_patients", id), { 
+        status: next, 
+        updatedAt: Date.now() 
+      });
+    };
+
+    window.deletePatient = async function(id) {
+      if (confirm('Hapus data pasien ini dari database bersama?')) {
+        await deleteDoc(doc(db, "ward_patients", id));
+      }
+    };
+
+    window.setStatusFilter = function(status) {
+      currentStatus = status;
+      document.getElementById('tab-aktif').className = status === 'Aktif Rawat' 
+        ? 'px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs' 
+        : 'px-3 py-1.5 rounded-lg text-slate-600';
+      document.getElementById('tab-krs').className = status === 'KRS' 
+        ? 'px-3 py-1.5 rounded-lg bg-white text-slate-900 font-bold shadow-xs' 
+        : 'px-3 py-1.5 rounded-lg text-slate-600';
+      render();
+    };
+
+    window.handleSearch = function(val) {
+      currentQuery = val.toLowerCase().trim();
+      render();
+    };
+
+    window.handleDpjpFilter = function(val) {
+      currentDpjp = val;
+      render();
+    };
+
+    window.openModal = function(id = null) {
+      document.getElementById('modal').classList.remove('hidden');
+      if (id) {
+        const p = patients.find(item => item.id === id);
+        document.getElementById('modal-title').textContent = 'Edit Data Pasien';
+        document.getElementById('edit-id').value = p.id;
+        document.getElementById('input-nama').value = p.nama;
+        document.getElementById('input-norm').value = p.noRm;
+        document.getElementById('input-kamar').value = p.kamar;
+        document.getElementById('input-dpjp').value = p.dpjp;
+        document.getElementById('input-dx').value = p.diagnosis;
+        document.getElementById('input-status').value = p.status;
+      } else {
+        document.getElementById('modal-title').textContent = 'Input Pasien Baru';
+        document.getElementById('patient-form').reset();
+        document.getElementById('edit-id').value = '';
+      }
+    };
+
+    window.closeModal = function() {
+      document.getElementById('modal').classList.add('hidden');
+    };
+
+    window.copyHandoff = function() {
+      const active = patients.filter(p => p.status === 'Aktif Rawat');
+      if (active.length === 0) return alert('Tidak ada pasien aktif untuk operan.');
+      
+      let text = `*OPERAN JAGA BANGSAL RAWAT INAP*\nTotal Pasien Aktif: ${active.length}\n------------------------------\n`;
+      active.forEach((p, idx) => {
+        text += `\n${idx + 1}. *[${p.kamar}]* *${p.nama}* (RM: ${p.noRm})\n   • DPJP: ${p.dpjp}\n   • Dx: ${p.diagnosis}\n`;
+      });
+      navigator.clipboard.writeText(text).then(() => alert('Teks operan berhasil disalin ke clipboard!'));
+    };
+
+    function render() {
+      const aktifCount = patients.filter(p => p.status === 'Aktif Rawat').length;
+      const krsCount = patients.filter(p => p.status === 'KRS').length;
+      document.getElementById('count-aktif').textContent = aktifCount;
+      document.getElementById('count-krs').textContent = krsCount;
+
+      // Update dropdown DPJP secara otomatis
+      const dpjpSelect = document.getElementById('filter-dpjp');
+      const currentSelected = dpjpSelect.value;
+      const dpjpList = Array.from(new Set(patients.map(p => p.dpjp).filter(Boolean)));
+      dpjpSelect.innerHTML = '<option value="Semua">Semua DPJP</option>' + 
+        dpjpList.map(d => `<option value="${d}" ${d === currentSelected ? 'selected' : ''}>${d}</option>`).join('');
+
+      const filtered = patients.filter(p => {
+        if (p.status !== currentStatus) return false;
+        if (currentDpjp !== 'Semua' && p.dpjp !== currentDpjp) return false;
+        if (currentQuery) {
+          const match = (p.nama + p.noRm + p.kamar + p.diagnosis + p.dpjp).toLowerCase();
+          return match.includes(currentQuery);
+        }
+        return true;
+      }).sort((a, b) => (a.kamar || '').localeCompare(b.kamar || '', undefined, { numeric: true }));
+
+      const grid = document.getElementById('patient-grid');
+      if (filtered.length === 0) {
+        grid.innerHTML = '<div class="col-span-full py-16 text-center text-slate-400 text-sm">Belum ada pasien pada filter ini. Klik "+ Tambah Pasien" untuk mulai mengisi data.</div>';
+        return;
+      }
+
+      grid.innerHTML = filtered.map(p => `
+        <article class="bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between overflow-hidden">
+          <div class="h-1.5 w-full ${p.status === 'Aktif Rawat' ? 'bg-emerald-500' : 'bg-slate-400'}"></div>
+          <div class="p-5 flex-1 flex flex-col justify-between">
+            <div>
+              <div class="flex items-start justify-between gap-2 mb-2">
+                <span class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">${p.kamar}</span>
+                <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${p.status}</span>
+              </div>
+              <h3 class="text-base font-bold text-slate-900">${p.nama}</h3>
+              <div class="flex flex-wrap gap-2 text-xs mt-1 mb-3">
+                <span class="font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">RM: ${p.noRm}</span>
+                <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200">${p.dpjp}</span>
+              </div>
+              <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-xs text-slate-700 leading-relaxed mb-4">
+                <p class="font-bold text-[10px] uppercase text-slate-400 mb-0.5">Diagnosis (Dx)</p>
+                ${p.diagnosis}
+              </div>
+            </div>
+            <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+              <button onclick="toggleStatus('${p.id}', '${p.status}')" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold border ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
+                ${p.status === 'Aktif Rawat' ? 'Tandai KRS' : 'Aktifkan Kembali'}
+              </button>
+              <button onclick="openModal('${p.id}')" class="p-1.5 text-slate-500 hover:text-blue-600 text-xs font-bold">Edit</button>
+              <button onclick="deletePatient('${p.id}')" class="p-1.5 text-slate-400 hover:text-red-600 text-xs font-bold">Hapus</button>
+            </div>
+          </div>
+        </article>
+      `).join('');
+    }
+  </script>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
 
-  <!-- Header -->
-  <header class="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
+  <header class="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 shadow-xs">
     <div class="max-w-7xl mx-auto px-4 py-3.5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">
-            W
-          </div>
+          <div class="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-lg shadow-xs">W</div>
           <div>
             <div class="flex items-center gap-2">
               <h1 class="text-lg font-bold text-slate-900">WardTracker</h1>
-              <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Online</span>
+              <span id="sync-indicator" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">Connecting...</span>
             </div>
             <p class="text-xs text-slate-500">Tracking & Operan Jaga Rawat Inap</p>
           </div>
         </div>
-        <button onclick="openModal()" class="md:hidden bg-emerald-600 text-white font-semibold text-xs px-3 py-2 rounded-xl">
-          + Pasien
-        </button>
+        <button onclick="openModal()" class="md:hidden bg-emerald-600 text-white font-semibold text-xs px-3 py-2 rounded-xl">+ Pasien</button>
       </div>
 
       <div class="flex items-center gap-2">
@@ -41,35 +243,26 @@
         <button onclick="copyHandoff()" class="px-3 py-2 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl shadow-xs">
           Salin Operan
         </button>
-        <button onclick="openModal()" class="hidden md:inline-flex bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl">
+        <button onclick="openModal()" class="hidden md:inline-flex bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs">
           + Tambah Pasien
         </button>
       </div>
     </div>
   </header>
 
-  <!-- Filter & Search -->
   <section class="bg-white border-b border-slate-200 py-3">
     <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center gap-2.5">
-      <input
-        id="search-input"
-        type="text"
-        oninput="handleSearch(this.value)"
-        placeholder="Cari nama pasien, No. RM, kamar, atau diagnosis..."
-        class="w-full sm:flex-1 px-3.5 py-2 bg-slate-50 text-sm rounded-xl border border-slate-200 focus:outline-emerald-500"
-      />
+      <input id="search-input" type="text" oninput="handleSearch(this.value)" placeholder="Cari pasien, No. RM, kamar, atau diagnosis..." class="w-full sm:flex-1 px-3.5 py-2 bg-slate-50 text-sm rounded-xl border border-slate-200 focus:outline-emerald-500" />
       <select id="filter-dpjp" onchange="handleDpjpFilter(this.value)" class="w-full sm:w-48 px-3 py-2 bg-slate-50 text-xs text-slate-700 rounded-xl border border-slate-200">
         <option value="Semua">Semua DPJP</option>
       </select>
     </div>
   </section>
 
-  <!-- Grid Kartu Pasien -->
   <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
     <div id="patient-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
   </main>
 
-  <!-- Modal Input/Edit -->
   <div id="modal" class="fixed inset-0 z-50 hidden bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden">
       <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50">
@@ -81,26 +274,26 @@
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div class="sm:col-span-2">
             <label class="block text-xs font-bold text-slate-600 mb-1">Nama Pasien *</label>
-            <input id="input-nama" required type="text" placeholder="Tn. Budi Santoso" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300" />
+            <input id="input-nama" required type="text" placeholder="Tn. Budi Santoso" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-600 mb-1">No. RM *</label>
-            <input id="input-norm" required type="text" placeholder="00-12-34-56" class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-slate-300" />
+            <input id="input-norm" required type="text" placeholder="00-12-34-56" class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-slate-300 focus:outline-emerald-600" />
           </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label class="block text-xs font-bold text-slate-600 mb-1">Kamar / Bed *</label>
-            <input id="input-kamar" required type="text" placeholder="Melati 1 - Bed A" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300" />
+            <input id="input-kamar" required type="text" placeholder="Melati 1 - Bed A" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-600 mb-1">DPJP</label>
-            <input id="input-dpjp" type="text" placeholder="dr. Hendra, Sp.PD" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300" />
+            <input id="input-dpjp" type="text" placeholder="dr. Hendra, Sp.PD" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
           </div>
         </div>
         <div>
-          <label class="block text-xs font-bold text-slate-600 mb-1">Diagnosis (Dx) & Rencana</label>
-          <textarea id="input-dx" rows="3" placeholder="Diagnosis dan terapi harian..." class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300"></textarea>
+          <label class="block text-xs font-bold text-slate-600 mb-1">Diagnosis (Dx)</label>
+          <textarea id="input-dx" rows="3" placeholder="Diagnosis dan terapi harian..." class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600"></textarea>
         </div>
         <div>
           <label class="block text-xs font-bold text-slate-600 mb-1">Status Pasien</label>
@@ -110,201 +303,11 @@
           </select>
         </div>
         <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
-          <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl">Batal</button>
+          <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-slate-600 rounded-xl">Batal</button>
           <button type="submit" class="px-5 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl">Simpan</button>
         </div>
       </form>
     </div>
   </div>
-
-  <!-- Toast -->
-  <div id="toast" class="fixed bottom-5 right-5 z-50 hidden bg-slate-900 text-white text-xs font-medium px-4 py-3 rounded-xl shadow-lg border border-slate-800"></div>
-
-  <script>
-    // Data Awal Bawaan Bangsal
-    const initialData = [
-      { id: '1', nama: 'Tn. Budi Santoso', noRm: '00-48-29-11', kamar: 'Melati 1 - Bed A', dpjp: 'dr. Hendra Wijaya, Sp.PD', diagnosis: 'Dengue Hemorrhagic Fever (DHF) Grade II + Trombositopenia (42.000). Rencana evaluasi DL.', status: 'Aktif Rawat' },
-      { id: '2', nama: 'Ny. Siti Aminah', noRm: '00-91-04-55', kamar: 'Melati 2 - Bed C', dpjp: 'dr. Rina Kartika, Sp.JP', diagnosis: 'CHF NYHA Fc III + Edema Paru Akut (Perbaikan). Target balance -500cc/24 jam.', status: 'Aktif Rawat' },
-      { id: '3', nama: 'Tn. Agus Pratama', noRm: '00-73-18-90', kamar: 'ICU - Bed 2', dpjp: 'dr. Hendra Wijaya, Sp.PD', diagnosis: 'Sepsis ec Pneumonia Komunitas Berat + AKI Stage 2. Terpasang HFNC 40 Lpm FiO2 50%.', status: 'Aktif Rawat' },
-      { id: '4', nama: 'An. Kevin Alvaro', noRm: '01-12-33-08', kamar: 'Anggrek Anak - Bed 1', dpjp: 'dr. Maya Putri, Sp.A', diagnosis: 'Gastroenteritis Akut (GEA) Dehidrasi Ringan-Sedang. Rencana KRS sore.', status: 'Aktif Rawat' },
-      { id: '5', nama: 'Ny. Ratna Sari', noRm: '00-65-21-77', kamar: 'Flamboyan 2 - Bed B', dpjp: 'dr. Lukman Hakim, Sp.B', diagnosis: 'Post Laparotomi H+3 a/i Appendisitis Perforasi. Luka operasi baik, flatus (+).', status: 'KRS' }
-    ];
-
-    let patients = JSON.parse(localStorage.getItem('ward_patients')) || initialData;
-    let currentStatus = 'Aktif Rawat';
-    let currentQuery = '';
-    let currentDpjp = 'Semua';
-
-    function saveToStorage() {
-      localStorage.setItem('ward_patients', JSON.stringify(patients));
-      render();
-    }
-
-    function showToast(msg) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.classList.remove('hidden');
-      setTimeout(() => t.classList.add('hidden'), 2500);
-    }
-
-    function setStatusFilter(status) {
-      currentStatus = status;
-      document.getElementById('tab-aktif').className = status === 'Aktif Rawat' ? 'px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs' : 'px-3 py-1.5 rounded-lg text-slate-600';
-      document.getElementById('tab-krs').className = status === 'KRS' ? 'px-3 py-1.5 rounded-lg bg-white text-slate-900 font-bold shadow-xs' : 'px-3 py-1.5 rounded-lg text-slate-600';
-      render();
-    }
-
-    function handleSearch(val) {
-      currentQuery = val.toLowerCase().trim();
-      render();
-    }
-
-    function handleDpjpFilter(val) {
-      currentDpjp = val;
-      render();
-    }
-
-    function toggleStatus(id) {
-      patients = patients.map(p => {
-        if (p.id === id) {
-          const next = p.status === 'Aktif Rawat' ? 'KRS' : 'Aktif Rawat';
-          showToast(next === 'KRS' ? `${p.nama} ditandai KRS` : `${p.nama} diaktifkan kembali`);
-          return { ...p, status: next };
-        }
-        return p;
-      });
-      saveToStorage();
-    }
-
-    function deletePatient(id) {
-      if (confirm('Hapus data pasien ini?')) {
-        patients = patients.filter(p => p.id !== id);
-        saveToStorage();
-        showToast('Data pasien dihapus');
-      }
-    }
-
-    function openModal(id = null) {
-      document.getElementById('modal').classList.remove('hidden');
-      if (id) {
-        const p = patients.find(item => item.id === id);
-        document.getElementById('modal-title').textContent = 'Edit Pasien';
-        document.getElementById('edit-id').value = p.id;
-        document.getElementById('input-nama').value = p.nama;
-        document.getElementById('input-norm').value = p.noRm;
-        document.getElementById('input-kamar').value = p.kamar;
-        document.getElementById('input-dpjp').value = p.dpjp;
-        document.getElementById('input-dx').value = p.diagnosis;
-        document.getElementById('input-status').value = p.status;
-      } else {
-        document.getElementById('modal-title').textContent = 'Input Pasien Baru';
-        document.getElementById('patient-form').reset();
-        document.getElementById('edit-id').value = '';
-      }
-    }
-
-    function closeModal() {
-      document.getElementById('modal').classList.add('hidden');
-    }
-
-    function savePatient(e) {
-      e.preventDefault();
-      const id = document.getElementById('edit-id').value;
-      const data = {
-        nama: document.getElementById('input-nama').value,
-        noRm: document.getElementById('input-norm').value,
-        kamar: document.getElementById('input-kamar').value,
-        dpjp: document.getElementById('input-dpjp').value || 'DPJP Umum',
-        diagnosis: document.getElementById('input-dx').value || '-',
-        status: document.getElementById('input-status').value
-      };
-
-      if (id) {
-        patients = patients.map(p => p.id === id ? { ...p, ...data } : p);
-        showToast('Data berhasil diperbarui');
-      } else {
-        patients.unshift({ id: Date.now().toString(), ...data });
-        showToast('Pasien baru ditambahkan');
-      }
-      closeModal();
-      saveToStorage();
-    }
-
-    function copyHandoff() {
-      const active = patients.filter(p => p.status === 'Aktif Rawat');
-      if (active.length === 0) return showToast('Tidak ada pasien aktif');
-      const lines = [
-        `*OPERAN JAGA BANGSAL RAWAT INAP*`,
-        `Total: ${active.length} Pasien Aktif\n------------------------------`
-      ];
-      active.forEach((p, idx) => {
-        lines.push(`${idx + 1}. *[${p.kamar}]* *${p.nama}* (RM: ${p.noRm})\n   • DPJP: ${p.dpjp}\n   • Dx: ${p.diagnosis}`);
-      });
-      navigator.clipboard.writeText(lines.join('\n\n')).then(() => showToast('Ringkasan operan disalin ke clipboard!'));
-    }
-
-    function render() {
-      const aktifCount = patients.filter(p => p.status === 'Aktif Rawat').length;
-      const krsCount = patients.filter(p => p.status === 'KRS').length;
-      document.getElementById('count-aktif').textContent = aktifCount;
-      document.getElementById('count-krs').textContent = krsCount;
-
-      // Update dropdown DPJP
-      const dpjpSelect = document.getElementById('filter-dpjp');
-      const currentSelected = dpjpSelect.value;
-      const dpjpList = Array.from(new Set(patients.map(p => p.dpjp).filter(Boolean)));
-      dpjpSelect.innerHTML = '<option value="Semua">Semua DPJP</option>' + dpjpList.map(d => `<option value="${d}" ${d === currentSelected ? 'selected' : ''}>${d}</option>`).join('');
-
-      // Filter data
-      const filtered = patients.filter(p => {
-        if (p.status !== currentStatus) return false;
-        if (currentDpjp !== 'Semua' && p.dpjp !== currentDpjp) return false;
-        if (currentQuery) {
-          const match = (p.nama + p.noRm + p.kamar + p.diagnosis + p.dpjp).toLowerCase();
-          return match.includes(currentQuery);
-        }
-        return true;
-      });
-
-      const grid = document.getElementById('patient-grid');
-      if (filtered.length === 0) {
-        grid.innerHTML = '<div class="col-span-full py-16 text-center text-slate-400 text-sm">Tidak ada pasien pada tab ini.</div>';
-        return;
-      }
-
-      grid.innerHTML = filtered.map(p => `
-        <article class="bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between overflow-hidden">
-          <div class="h-1.5 w-full ${p.status === 'Aktif Rawat' ? 'bg-emerald-500' : 'bg-slate-400'}"></div>
-          <div class="p-5 flex-1 flex flex-col justify-between">
-            <div>
-              <div class="flex items-start justify-between gap-2 mb-2">
-                <span class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">${p.kamar}</span>
-                <span class="px-2 py-0.5 rounded-full text-xs font-semibold ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${p.status}</span>
-              </div>
-              <h3 class="text-base font-bold text-slate-900">${p.nama}</h3>
-              <div class="flex flex-wrap gap-2 text-xs mt-1 mb-3">
-                <span class="font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">RM: ${p.noRm}</span>
-                <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200">${p.dpjp}</span>
-              </div>
-              <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-xs text-slate-700 leading-relaxed mb-4">
-                <p class="font-bold text-[10px] uppercase text-slate-400 mb-0.5">Diagnosis (Dx)</p>
-                ${p.diagnosis}
-              </div>
-            </div>
-            <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-              <button onclick="toggleStatus('${p.id}')" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold border ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
-                ${p.status === 'Aktif Rawat' ? 'Tandai KRS' : 'Aktifkan Kembali'}
-              </button>
-              <button onclick="openModal('${p.id}')" class="p-1.5 text-slate-500 hover:text-blue-600 text-xs font-bold">Edit</button>
-              <button onclick="deletePatient('${p.id}')" class="p-1.5 text-slate-400 hover:text-red-600 text-xs font-bold">Hapus</button>
-            </div>
-          </div>
-        </article>
-      `).join('');
-    }
-
-    // Jalankan render awal
-    render();
-  </script>
 </body>
 </html>
