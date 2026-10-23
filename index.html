@@ -47,6 +47,7 @@
     let currentStatus = 'Aktif Rawat';
     let currentQuery = '';
     let currentDpjp = 'Semua';
+    let viewMode = 'grid'; // 'grid' (Kartu) atau 'list' (List Simple)
 
     // Listener Real-Time: Perubahan di HP langsung update di PC secara instan
     onSnapshot(colRef, (snapshot) => {
@@ -117,8 +118,28 @@
       });
     };
 
+    // Pindahkan ke daftar Terhapus (Soft Delete)
     window.deletePatient = async function(id) {
-      if (confirm('Hapus data pasien ini dari database bersama?')) {
+      if (confirm('Pindahkan data pasien ini ke daftar Terhapus?')) {
+        await updateDoc(doc(db, "ward_patients", id), {
+          status: 'Terhapus',
+          deletedAt: Date.now(),
+          updatedAt: Date.now()
+        });
+      }
+    };
+
+    // Pulihkan pasien dari daftar Terhapus ke Aktif Rawat
+    window.restorePatient = async function(id) {
+      await updateDoc(doc(db, "ward_patients", id), {
+        status: 'Aktif Rawat',
+        updatedAt: Date.now()
+      });
+    };
+
+    // Hapus permanen dari database Firebase
+    window.permanentDeletePatient = async function(id) {
+      if (confirm('Hapus PERMANEN data pasien ini dari database? Tindakan ini tidak bisa dibatalkan.')) {
         await deleteDoc(doc(db, "ward_patients", id));
       }
     };
@@ -131,6 +152,20 @@
       document.getElementById('tab-krs').className = status === 'KRS' 
         ? 'px-3 py-1.5 rounded-lg bg-white text-slate-900 font-bold shadow-xs' 
         : 'px-3 py-1.5 rounded-lg text-slate-600';
+      document.getElementById('tab-deleted').className = status === 'Terhapus' 
+        ? 'px-3 py-1.5 rounded-lg bg-white text-red-600 font-bold shadow-xs' 
+        : 'px-3 py-1.5 rounded-lg text-slate-600';
+      render();
+    };
+
+    window.setViewMode = function(mode) {
+      viewMode = mode;
+      document.getElementById('btn-view-grid').className = mode === 'grid'
+        ? 'px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs flex items-center gap-1'
+        : 'px-3 py-1.5 rounded-lg text-slate-600 flex items-center gap-1';
+      document.getElementById('btn-view-list').className = mode === 'list'
+        ? 'px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs flex items-center gap-1'
+        : 'px-3 py-1.5 rounded-lg text-slate-600 flex items-center gap-1';
       render();
     };
 
@@ -142,6 +177,44 @@
     window.handleDpjpFilter = function(val) {
       currentDpjp = val;
       render();
+    };
+
+    // Modal Pop-up Detail Pasien (Saat baris di Mode List diklik)
+    window.openDetailModal = function(id) {
+      const p = patients.find(item => item.id === id);
+      if (!p) return;
+
+      document.getElementById('detail-kamar').textContent = p.kamar;
+      document.getElementById('detail-nama').textContent = p.nama;
+      document.getElementById('detail-norm').textContent = 'RM: ' + p.noRm;
+      document.getElementById('detail-dpjp').textContent = p.dpjp;
+      document.getElementById('detail-dx').textContent = p.diagnosis || '-';
+      
+      const statusBadge = document.getElementById('detail-status');
+      statusBadge.textContent = p.status;
+      statusBadge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold ' + 
+        (p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700' : p.status === 'KRS' ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-700');
+
+      const actionsDiv = document.getElementById('detail-actions');
+      if (p.status === 'Terhapus') {
+        actionsDiv.innerHTML = `
+          <button onclick="restorePatient('${p.id}'); closeDetailModal();" class="flex-1 py-2 px-3 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700">Pulihkan Pasien</button>
+          <button onclick="permanentDeletePatient('${p.id}'); closeDetailModal();" class="py-2 px-3 rounded-xl text-xs font-bold bg-red-50 text-red-600 border border-red-200 hover:bg-red-600 hover:text-white">Hapus Permanen</button>
+        `;
+      } else {
+        actionsDiv.innerHTML = `
+          <button onclick="toggleStatus('${p.id}', '${p.status}'); closeDetailModal();" class="flex-1 py-2 px-3 rounded-xl text-xs font-semibold border ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
+            ${p.status === 'Aktif Rawat' ? 'Tandai KRS' : 'Aktifkan Kembali'}
+          </button>
+          <button onclick="closeDetailModal(); openModal('${p.id}');" class="py-2 px-4 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-600 hover:text-white">Edit Data</button>
+        `;
+      }
+
+      document.getElementById('detail-modal').classList.remove('hidden');
+    };
+
+    window.closeDetailModal = function() {
+      document.getElementById('detail-modal').classList.add('hidden');
     };
 
     window.openModal = function(id = null) {
@@ -198,8 +271,11 @@
     function render() {
       const aktifCount = patients.filter(p => p.status === 'Aktif Rawat').length;
       const krsCount = patients.filter(p => p.status === 'KRS').length;
+      const deletedCount = patients.filter(p => p.status === 'Terhapus').length;
+      
       document.getElementById('count-aktif').textContent = aktifCount;
       document.getElementById('count-krs').textContent = krsCount;
+      document.getElementById('count-deleted').textContent = deletedCount;
 
       // Update dropdown filter DPJP secara otomatis
       const dpjpSelect = document.getElementById('filter-dpjp');
@@ -220,18 +296,46 @@
 
       const grid = document.getElementById('patient-grid');
       if (filtered.length === 0) {
-        grid.innerHTML = '<div class="col-span-full py-16 text-center text-slate-400 text-sm">Belum ada pasien pada filter ini. Klik "+ Tambah Pasien" untuk mulai mengisi data.</div>';
+        grid.className = "grid grid-cols-1";
+        grid.innerHTML = '<div class="col-span-full py-16 text-center text-slate-400 text-sm">Belum ada pasien pada filter ini.</div>';
         return;
       }
 
+      // TAMPILAN MODE LIST SIMPLE (Ruangan, Nama, RM, DPJP + Klik untuk Pop-up Detail)
+      if (viewMode === 'list') {
+        grid.className = "flex flex-col gap-2";
+        grid.innerHTML = filtered.map(p => `
+          <div onclick="openDetailModal('${p.id}')" class="cursor-pointer bg-white rounded-xl border border-slate-200 px-4 py-3 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 hover:border-emerald-400 hover:bg-emerald-50/20 transition">
+            <div class="flex flex-wrap items-center gap-2 min-w-0 flex-1">
+              <span class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold shrink-0">${p.kamar}</span>
+              <h3 class="text-sm font-bold text-slate-900 truncate">${p.nama}</h3>
+              <span class="font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200 text-xs shrink-0">RM: ${p.noRm}</span>
+              <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 text-xs shrink-0">${p.dpjp}</span>
+            </div>
+            <div class="flex items-center justify-end gap-2 shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100" onclick="event.stopPropagation()">
+              ${p.status === 'Terhapus' ? `
+                <button onclick="restorePatient('${p.id}')" class="py-1 px-2.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white">Pulihkan</button>
+                <button onclick="permanentDeletePatient('${p.id}')" class="p-1 text-red-500 hover:text-red-700 text-xs font-bold">Hapus Permanen</button>
+              ` : `
+                <button onclick="openModal('${p.id}')" class="p-1 text-slate-500 hover:text-blue-600 text-xs font-bold">Edit</button>
+                <button onclick="deletePatient('${p.id}')" class="p-1 text-slate-400 hover:text-red-600 text-xs font-bold">Hapus</button>
+              `}
+            </div>
+          </div>
+        `).join('');
+        return;
+      }
+
+      // TAMPILAN MODE KARTU (DEFAULT)
+      grid.className = "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4";
       grid.innerHTML = filtered.map(p => `
         <article class="bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between overflow-hidden">
-          <div class="h-1.5 w-full ${p.status === 'Aktif Rawat' ? 'bg-emerald-500' : 'bg-slate-400'}"></div>
+          <div class="h-1.5 w-full ${p.status === 'Aktif Rawat' ? 'bg-emerald-500' : p.status === 'KRS' ? 'bg-slate-400' : 'bg-red-500'}"></div>
           <div class="p-5 flex-1 flex flex-col justify-between">
             <div>
               <div class="flex items-start justify-between gap-2 mb-2">
                 <span class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">${p.kamar}</span>
-                <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${p.status}</span>
+                <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700' : p.status === 'KRS' ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-700'}">${p.status}</span>
               </div>
               <h3 class="text-base font-bold text-slate-900">${p.nama}</h3>
               <div class="flex flex-wrap gap-2 text-xs mt-1 mb-3">
@@ -244,11 +348,20 @@
               </div>
             </div>
             <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-              <button onclick="toggleStatus('${p.id}', '${p.status}')" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold border ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
-                ${p.status === 'Aktif Rawat' ? 'Tandai KRS' : 'Aktifkan Kembali'}
-              </button>
-              <button onclick="openModal('${p.id}')" class="p-1.5 text-slate-500 hover:text-blue-600 text-xs font-bold">Edit</button>
-              <button onclick="deletePatient('${p.id}')" class="p-1.5 text-slate-400 hover:text-red-600 text-xs font-bold">Hapus</button>
+              ${p.status === 'Terhapus' ? `
+                <button onclick="restorePatient('${p.id}')" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white">
+                  Pulihkan Pasien
+                </button>
+                <button onclick="permanentDeletePatient('${p.id}')" class="py-1.5 px-2.5 rounded-xl bg-red-50 text-red-600 hover:bg-red-600 hover:text-white text-xs font-bold border border-red-200">
+                  Hapus Permanen
+                </button>
+              ` : `
+                <button onclick="toggleStatus('${p.id}', '${p.status}')" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold border ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
+                  ${p.status === 'Aktif Rawat' ? 'Tandai KRS' : 'Aktifkan Kembali'}
+                </button>
+                <button onclick="openModal('${p.id}')" class="p-1.5 text-slate-500 hover:text-blue-600 text-xs font-bold">Edit</button>
+                <button onclick="deletePatient('${p.id}')" class="p-1.5 text-slate-400 hover:text-red-600 text-xs font-bold">Hapus</button>
+              `}
             </div>
           </div>
         </article>
@@ -279,14 +392,17 @@
         </button>
       </div>
 
-      <!-- Sisi Kanan: Tab Aktif/KRS & Butang Tindakan -->
-      <div class="flex items-center gap-2">
+      <!-- Sisi Kanan: Tab Aktif/KRS/Terhapus & Butang Tindakan -->
+      <div class="flex flex-wrap items-center gap-2">
         <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-medium">
           <button onclick="setStatusFilter('Aktif Rawat')" id="tab-aktif" class="px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs">
             Aktif: <span id="count-aktif">0</span>
           </button>
           <button onclick="setStatusFilter('KRS')" id="tab-krs" class="px-3 py-1.5 rounded-lg text-slate-600">
             KRS: <span id="count-krs">0</span>
+          </button>
+          <button onclick="setStatusFilter('Terhapus')" id="tab-deleted" class="px-3 py-1.5 rounded-lg text-slate-600">
+            Terhapus: <span id="count-deleted">0</span>
           </button>
         </div>
         <button onclick="copyHandoff()" class="px-3 py-2 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl shadow-xs">
@@ -302,9 +418,20 @@
   <section class="bg-white border-b border-slate-200 py-3">
     <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center gap-2.5">
       <input id="search-input" type="text" oninput="handleSearch(this.value)" placeholder="Cari pasien, No. RM, kamar, atau diagnosis..." class="w-full sm:flex-1 px-3.5 py-2 bg-slate-50 text-sm rounded-xl border border-slate-200 focus:outline-emerald-500" />
-      <select id="filter-dpjp" onchange="handleDpjpFilter(this.value)" class="w-full sm:w-56 px-3 py-2 bg-slate-50 text-xs text-slate-700 rounded-xl border border-slate-200">
-        <option value="Semua">Semua DPJP</option>
-      </select>
+      <div class="flex items-center gap-2 w-full sm:w-auto">
+        <select id="filter-dpjp" onchange="handleDpjpFilter(this.value)" class="flex-1 sm:w-56 px-3 py-2 bg-slate-50 text-xs text-slate-700 rounded-xl border border-slate-200">
+          <option value="Semua">Semua DPJP</option>
+        </select>
+        <!-- Toggle Mode Tampilan: Kartu vs List -->
+        <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-medium shrink-0">
+          <button onclick="setViewMode('grid')" id="btn-view-grid" class="px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs flex items-center gap-1">
+            <span>▦</span> Kartu
+          </button>
+          <button onclick="setViewMode('list')" id="btn-view-list" class="px-3 py-1.5 rounded-lg text-slate-600 flex items-center gap-1">
+            <span>☰</span> List
+          </button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -312,6 +439,34 @@
     <div id="patient-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
   </main>
 
+  <!-- Modal Pop-up Detail Pasien (Saat klik baris di Mode List) -->
+  <div id="detail-modal" onclick="closeDetailModal()" class="fixed inset-0 z-50 hidden bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+    <div onclick="event.stopPropagation()" class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3.5 border-b border-slate-200 bg-slate-50">
+        <div class="flex items-center gap-2">
+          <span id="detail-kamar" class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold"></span>
+          <span id="detail-status" class="px-2.5 py-0.5 rounded-full text-xs font-semibold"></span>
+        </div>
+        <button onclick="closeDetailModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold leading-none">&times;</button>
+      </div>
+      <div class="p-5 space-y-4">
+        <div>
+          <h3 id="detail-nama" class="text-lg font-bold text-slate-900"></h3>
+          <div class="flex flex-wrap gap-2 text-xs mt-1.5">
+            <span id="detail-norm" class="font-mono bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded border border-slate-200"></span>
+            <span id="detail-dpjp" class="bg-blue-50 text-blue-700 px-2.5 py-0.5 rounded border border-blue-200 font-medium"></span>
+          </div>
+        </div>
+        <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 text-xs text-slate-700 leading-relaxed whitespace-pre-line">
+          <p class="font-bold text-[10px] uppercase text-slate-400 mb-1">Diagnosis (Dx) & Terapi</p>
+          <div id="detail-dx"></div>
+        </div>
+        <div id="detail-actions" class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Form Tambah / Edit Pasien -->
   <div id="modal" class="fixed inset-0 z-50 hidden bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden">
       <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50">
@@ -357,6 +512,7 @@
           <select id="input-status" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 bg-white">
             <option value="Aktif Rawat">Aktif Rawat</option>
             <option value="KRS">KRS (Pulang)</option>
+            <option value="Terhapus">Terhapus</option>
           </select>
         </div>
         <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
