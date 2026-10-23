@@ -34,6 +34,15 @@
     const db = getFirestore(app);
     const colRef = collection(db, "ward_patients");
 
+    // Daftar DPJP Obgyn Ruang Mawar
+    const DEFAULT_OBGYN_DPJP = [
+      "dr. M Dwinanda Junaedi, Sp.OG",
+      "dr. Fatimah Z, Sp.OG",
+      "dr. Ericka Anggraini, Sp.OG M.Ked.Klin",
+      "dr. Fitriarto Mahardika W, Sp.OG",
+      "dr. Gatut Hardianto, Sp.OG(K)-Urogin Re"
+    ];
+
     let patients = [];
     let currentStatus = 'Aktif Rawat';
     let currentQuery = '';
@@ -58,14 +67,31 @@
       }
     });
 
+    // Menampilkan atau menyembunyikan input DPJP manual
+    window.handleDpjpSelectChange = function(val) {
+      const manualInput = document.getElementById('input-dpjp-manual');
+      if (val === 'MANUAL') {
+        manualInput.classList.remove('hidden');
+        manualInput.focus();
+      } else {
+        manualInput.classList.add('hidden');
+        manualInput.value = '';
+      }
+    };
+
     window.savePatient = async function(e) {
       e.preventDefault();
       const id = document.getElementById('edit-id').value;
+      
+      const selectedDpjp = document.getElementById('select-dpjp').value;
+      const manualDpjp = document.getElementById('input-dpjp-manual').value.trim();
+      const finalDpjp = selectedDpjp === 'MANUAL' ? (manualDpjp || 'DPJP Umum') : (selectedDpjp || 'DPJP Umum');
+
       const data = {
         nama: document.getElementById('input-nama').value.trim(),
         noRm: document.getElementById('input-norm').value.trim(),
         kamar: document.getElementById('input-kamar').value.trim(),
-        dpjp: document.getElementById('input-dpjp').value.trim() || 'DPJP Umum',
+        dpjp: finalDpjp,
         diagnosis: document.getElementById('input-dx').value.trim() || '-',
         status: document.getElementById('input-status').value,
         updatedAt: Date.now()
@@ -120,6 +146,9 @@
 
     window.openModal = function(id = null) {
       document.getElementById('modal').classList.remove('hidden');
+      const selectDpjp = document.getElementById('select-dpjp');
+      const manualDpjp = document.getElementById('input-dpjp-manual');
+
       if (id) {
         const p = patients.find(item => item.id === id);
         document.getElementById('modal-title').textContent = 'Edit Data Pasien';
@@ -127,13 +156,27 @@
         document.getElementById('input-nama').value = p.nama;
         document.getElementById('input-norm').value = p.noRm;
         document.getElementById('input-kamar').value = p.kamar;
-        document.getElementById('input-dpjp').value = p.dpjp;
+        
+        // Cek apakah DPJP pasien ada di daftar Obgyn atau ketik manual (Non-Obgyn)
+        if (DEFAULT_OBGYN_DPJP.includes(p.dpjp)) {
+          selectDpjp.value = p.dpjp;
+          manualDpjp.classList.add('hidden');
+          manualDpjp.value = '';
+        } else {
+          selectDpjp.value = 'MANUAL';
+          manualDpjp.classList.remove('hidden');
+          manualDpjp.value = (p.dpjp && p.dpjp !== 'DPJP Umum') ? p.dpjp : '';
+        }
+
         document.getElementById('input-dx').value = p.diagnosis;
         document.getElementById('input-status').value = p.status;
       } else {
         document.getElementById('modal-title').textContent = 'Input Pasien Baru';
         document.getElementById('patient-form').reset();
         document.getElementById('edit-id').value = '';
+        selectDpjp.value = DEFAULT_OBGYN_DPJP[0]; // Default ke pilihan pertama agar cepat
+        manualDpjp.classList.add('hidden');
+        manualDpjp.value = '';
       }
     };
 
@@ -158,7 +201,7 @@
       document.getElementById('count-aktif').textContent = aktifCount;
       document.getElementById('count-krs').textContent = krsCount;
 
-      // Update dropdown DPJP secara otomatis
+      // Update dropdown filter DPJP secara otomatis
       const dpjpSelect = document.getElementById('filter-dpjp');
       const currentSelected = dpjpSelect.value;
       const dpjpList = Array.from(new Set(patients.map(p => p.dpjp).filter(Boolean)));
@@ -255,15 +298,11 @@
       </div>
     </div>
   </header>
-        </button>
-      </div>
-    </div>
-  </header>
 
   <section class="bg-white border-b border-slate-200 py-3">
     <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center gap-2.5">
       <input id="search-input" type="text" oninput="handleSearch(this.value)" placeholder="Cari pasien, No. RM, kamar, atau diagnosis..." class="w-full sm:flex-1 px-3.5 py-2 bg-slate-50 text-sm rounded-xl border border-slate-200 focus:outline-emerald-500" />
-      <select id="filter-dpjp" onchange="handleDpjpFilter(this.value)" class="w-full sm:w-48 px-3 py-2 bg-slate-50 text-xs text-slate-700 rounded-xl border border-slate-200">
+      <select id="filter-dpjp" onchange="handleDpjpFilter(this.value)" class="w-full sm:w-56 px-3 py-2 bg-slate-50 text-xs text-slate-700 rounded-xl border border-slate-200">
         <option value="Semua">Semua DPJP</option>
       </select>
     </div>
@@ -284,7 +323,7 @@
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div class="sm:col-span-2">
             <label class="block text-xs font-bold text-slate-600 mb-1">Nama Pasien *</label>
-            <input id="input-nama" required type="text" placeholder="Tn. Budi Santoso" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
+            <input id="input-nama" required type="text" placeholder="Ny. Siti Aminah" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-600 mb-1">No. RM *</label>
@@ -294,11 +333,19 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label class="block text-xs font-bold text-slate-600 mb-1">Kamar / Bed *</label>
-            <input id="input-kamar" required type="text" placeholder="Melati 1 - Bed A" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
+            <input id="input-kamar" required type="text" placeholder="Mawar 1 - Bed A" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-600 mb-1">DPJP</label>
-            <input id="input-dpjp" type="text" placeholder="dr. Hendra, Sp.PD" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
+            <select id="select-dpjp" onchange="handleDpjpSelectChange(this.value)" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 bg-white focus:outline-emerald-600">
+              <option value="dr. M Dwinanda Junaedi, Sp.OG">dr. M Dwinanda Junaedi, Sp.OG</option>
+              <option value="dr. Fatimah Z, Sp.OG">dr. Fatimah Z, Sp.OG</option>
+              <option value="dr. Ericka Anggraini, Sp.OG M.Ked.Klin">dr. Ericka Anggraini, Sp.OG M.Ked.Klin</option>
+              <option value="dr. Fitriarto Mahardika W, Sp.OG">dr. Fitriarto Mahardika W, Sp.OG</option>
+              <option value="dr. Gatut Hardianto, Sp.OG(K)-Urogin Re">dr. Gatut Hardianto, Sp.OG(K)-Urogin Re</option>
+              <option value="MANUAL">+ Ketik DPJP Sendiri (Non-Obgyn)...</option>
+            </select>
+            <input id="input-dpjp-manual" type="text" placeholder="Ketik nama DPJP Non-Obgyn..." class="hidden mt-2 w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
           </div>
         </div>
         <div>
