@@ -50,6 +50,48 @@
     let currentDpjp = 'Semua';
     let viewMode = 'grid'; // 'grid' (Kartu) atau 'list' (List Simple)
 
+    // Helper tanggal hari ini dalam format YYYY-MM-DD (waktu lokal)
+    function getTodayDateString() {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    // Helper untuk format tanggal dari timestamp atau string YYYY-MM-DD (contoh: 24 Okt 2026)
+    function formatTanggal(val) {
+      if (!val) return '';
+      if (typeof val === 'string' && val.includes('-')) {
+        const [y, m, d] = val.split('-').map(Number);
+        return new Date(y, m - 1, d).toLocaleDateString('id-ID', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric'
+        });
+      }
+      return new Date(val).toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      });
+    }
+
+    // Helper untuk menghitung Hari Rawat (Hari ke-1, Hari ke-2, dst.)
+    function hitungHariRawat(tglMrs, status, krsAt) {
+      if (!tglMrs) return null;
+      const [y, m, d] = tglMrs.split('-').map(Number);
+      const start = new Date(y, m - 1, d);
+      start.setHours(0, 0, 0, 0);
+
+      const end = (status === 'KRS' && krsAt) ? new Date(krsAt) : new Date();
+      end.setHours(0, 0, 0, 0);
+
+      const diffTime = end - start;
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      return diffDays > 0 ? diffDays : 1;
+    }
+
     // Listener Real-Time: Perubahan di HP langsung update di PC secara instan
     onSnapshot(colRef, (snapshot) => {
       patients = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -88,16 +130,28 @@
       const selectedDpjp = document.getElementById('select-dpjp').value;
       const manualDpjp = document.getElementById('input-dpjp-manual').value.trim();
       const finalDpjp = selectedDpjp === 'MANUAL' ? (manualDpjp || 'DPJP Umum') : (selectedDpjp || 'DPJP Umum');
+      const statusVal = document.getElementById('input-status').value;
+      const tglMrsVal = document.getElementById('input-mrs').value || getTodayDateString();
+
+      const existingPatient = id ? patients.find(item => item.id === id) : null;
 
       const data = {
         nama: document.getElementById('input-nama').value.trim(),
         noRm: document.getElementById('input-norm').value.trim(),
         kamar: document.getElementById('input-kamar').value.trim(),
         dpjp: finalDpjp,
+        tglMrs: tglMrsVal,
         diagnosis: document.getElementById('input-dx').value.trim() || '-',
-        status: document.getElementById('input-status').value,
+        status: statusVal,
         updatedAt: Date.now()
       };
+
+      // Set tanggal KRS jika status diubah jadi KRS lewat form
+      if (statusVal === 'KRS') {
+        data.krsAt = (existingPatient && existingPatient.krsAt) ? existingPatient.krsAt : Date.now();
+      } else {
+        data.krsAt = null;
+      }
 
       try {
         if (id) {
@@ -111,12 +165,31 @@
       }
     };
 
+    // Konfirmasi KRS & Simpan Tanggal KRS
     window.toggleStatus = async function(id, current) {
-      const next = current === 'Aktif Rawat' ? 'KRS' : 'Aktif Rawat';
-      await updateDoc(doc(db, "ward_patients", id), { 
-        status: next, 
-        updatedAt: Date.now() 
-      });
+      const p = patients.find(item => item.id === id);
+      const namaPasien = p ? p.nama : 'ini';
+
+      if (current === 'Aktif Rawat') {
+        if (!confirm(`Apakah Anda yakin pasien "${namaPasien}" sudah KRS (Pulang)?`)) {
+          return false;
+        }
+        await updateDoc(doc(db, "ward_patients", id), { 
+          status: 'KRS', 
+          krsAt: Date.now(),
+          updatedAt: Date.now() 
+        });
+      } else {
+        if (!confirm(`Aktifkan kembali status rawat inap untuk pasien "${namaPasien}"?`)) {
+          return false;
+        }
+        await updateDoc(doc(db, "ward_patients", id), { 
+          status: 'Aktif Rawat', 
+          krsAt: null,
+          updatedAt: Date.now() 
+        });
+      }
+      return true;
     };
 
     // Pindahkan ke daftar Terhapus (Soft Delete)
@@ -185,14 +258,25 @@
       const p = patients.find(item => item.id === id);
       if (!p) return;
 
+      const hariRawat = hitungHariRawat(p.tglMrs, p.status, p.krsAt);
+
       document.getElementById('detail-kamar').textContent = p.kamar;
       document.getElementById('detail-nama').textContent = p.nama;
       document.getElementById('detail-norm').textContent = 'RM: ' + p.noRm;
       document.getElementById('detail-dpjp').textContent = p.dpjp;
       document.getElementById('detail-dx').textContent = p.diagnosis || '-';
+
+      const mrsBadge = document.getElementById('detail-mrs');
+      if (p.tglMrs) {
+        mrsBadge.textContent = `MRS: ${formatTanggal(p.tglMrs)} (${ p.status === 'KRS' ? `Rawat ${hariRawat} hari` : `Hari ke-${hariRawat}` })`;
+        mrsBadge.classList.remove('hidden');
+      } else {
+        mrsBadge.classList.add('hidden');
+      }
       
       const statusBadge = document.getElementById('detail-status');
-      statusBadge.textContent = p.status;
+      const tglKrs = p.status === 'KRS' && p.krsAt ? ` (${formatTanggal(p.krsAt)})` : '';
+      statusBadge.textContent = p.status + tglKrs;
       statusBadge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold ' + 
         (p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700' : p.status === 'KRS' ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-700');
 
@@ -204,7 +288,7 @@
         `;
       } else {
         actionsDiv.innerHTML = `
-          <button onclick="toggleStatus('${p.id}', '${p.status}'); closeDetailModal();" class="flex-1 py-2 px-3 rounded-xl text-xs font-semibold border ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
+          <button onclick="toggleStatus('${p.id}', '${p.status}').then(ok => { if(ok) closeDetailModal(); })" class="flex-1 py-2 px-3 rounded-xl text-xs font-semibold border ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
             ${p.status === 'Aktif Rawat' ? 'Tandai KRS' : 'Aktifkan Kembali'}
           </button>
           <button onclick="closeDetailModal(); openModal('${p.id}');" class="py-2 px-4 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-600 hover:text-white">Edit Data</button>
@@ -230,6 +314,7 @@
         document.getElementById('input-nama').value = p.nama;
         document.getElementById('input-norm').value = p.noRm;
         document.getElementById('input-kamar').value = p.kamar;
+        document.getElementById('input-mrs').value = p.tglMrs || getTodayDateString();
         
         // Cek apakah DPJP pasien ada di daftar Obgyn atau ketik manual (Non-Obgyn)
         if (DEFAULT_OBGYN_DPJP.includes(p.dpjp)) {
@@ -248,6 +333,7 @@
         document.getElementById('modal-title').textContent = 'Input Pasien Baru';
         document.getElementById('patient-form').reset();
         document.getElementById('edit-id').value = '';
+        document.getElementById('input-mrs').value = getTodayDateString();
         selectDpjp.value = DEFAULT_OBGYN_DPJP[0]; // Default ke pilihan pertama agar cepat
         manualDpjp.classList.add('hidden');
         manualDpjp.value = '';
@@ -264,7 +350,9 @@
       
       let text = `*OPERAN JAGA BANGSAL RAWAT INAP*\nTotal Pasien Aktif: ${active.length}\n------------------------------\n`;
       active.forEach((p, idx) => {
-        text += `\n${idx + 1}. *[${p.kamar}]* *${p.nama}* (RM: ${p.noRm})\n   • DPJP: ${p.dpjp}\n   • Dx: ${p.diagnosis}\n`;
+        const hari = hitungHariRawat(p.tglMrs, p.status, p.krsAt);
+        const infoMrs = p.tglMrs ? ` (MRS: ${formatTanggal(p.tglMrs)} • Hari ke-${hari})` : '';
+        text += `\n${idx + 1}. *[${p.kamar}]* *${p.nama}* (RM: ${p.noRm})${infoMrs}\n   • DPJP: ${p.dpjp}\n   • Dx: ${p.diagnosis}\n`;
       });
       navigator.clipboard.writeText(text).then(() => alert('Teks operan berhasil disalin ke clipboard!'));
     };
@@ -302,16 +390,20 @@
         return;
       }
 
-      // TAMPILAN MODE LIST SIMPLE (Ruangan, Nama, RM, DPJP + Klik untuk Pop-up Detail)
+      // TAMPILAN MODE LIST SIMPLE (Ruangan, Nama, RM, DPJP + Hari Rawat / Tanggal KRS)
       if (viewMode === 'list') {
         grid.className = "flex flex-col gap-2";
-        grid.innerHTML = filtered.map(p => `
+        grid.innerHTML = filtered.map(p => {
+          const hariRawat = hitungHariRawat(p.tglMrs, p.status, p.krsAt);
+          return `
           <div onclick="openDetailModal('${p.id}')" class="cursor-pointer bg-white rounded-xl border border-slate-200 px-4 py-3 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 hover:border-emerald-400 hover:bg-emerald-50/20 transition">
             <div class="flex flex-wrap items-center gap-2 min-w-0 flex-1">
               <span class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold shrink-0">${p.kamar}</span>
               <h3 class="text-sm font-bold text-slate-900 truncate">${p.nama}</h3>
               <span class="font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200 text-xs shrink-0">RM: ${p.noRm}</span>
               <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 text-xs shrink-0">${p.dpjp}</span>
+              ${hariRawat && p.status === 'Aktif Rawat' ? `<span class="bg-purple-50 text-purple-700 px-2 py-0.5 rounded border border-purple-200 text-xs font-semibold shrink-0">Hari ke-${hariRawat}</span>` : ''}
+              ${p.status === 'KRS' && p.krsAt ? `<span class="bg-amber-50 text-amber-700 px-2 py-0.5 rounded border border-amber-200 text-xs font-medium shrink-0">🗓️ KRS: ${formatTanggal(p.krsAt)}${hariRawat ? ` (${hariRawat} hr)` : ''}</span>` : ''}
             </div>
             <div class="flex items-center justify-end gap-2 shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100" onclick="event.stopPropagation()">
               ${p.status === 'Terhapus' ? `
@@ -323,25 +415,33 @@
               `}
             </div>
           </div>
-        `).join('');
+        `}).join('');
         return;
       }
 
       // TAMPILAN MODE KARTU (DEFAULT)
       grid.className = "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4";
-      grid.innerHTML = filtered.map(p => `
+      grid.innerHTML = filtered.map(p => {
+        const hariRawat = hitungHariRawat(p.tglMrs, p.status, p.krsAt);
+        return `
         <article class="bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between overflow-hidden">
           <div class="h-1.5 w-full ${p.status === 'Aktif Rawat' ? 'bg-emerald-500' : p.status === 'KRS' ? 'bg-slate-400' : 'bg-red-500'}"></div>
           <div class="p-5 flex-1 flex flex-col justify-between">
             <div>
               <div class="flex items-start justify-between gap-2 mb-2">
-                <span class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">${p.kamar}</span>
-                <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700' : p.status === 'KRS' ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-700'}">${p.status}</span>
+                <div class="flex items-center gap-1.5">
+                  <span class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">${p.kamar}</span>
+                  ${hariRawat ? `<span class="px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 text-xs font-bold">${p.status === 'KRS' ? `Rawat ${hariRawat} hr` : `Hari ke-${hariRawat}`}</span>` : ''}
+                </div>
+                <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700' : p.status === 'KRS' ? 'bg-slate-100 text-slate-600' : 'bg-red-50 text-red-700'}">
+                  ${p.status}${p.status === 'KRS' && p.krsAt ? ` • ${formatTanggal(p.krsAt)}` : ''}
+                </span>
               </div>
               <h3 class="text-base font-bold text-slate-900">${p.nama}</h3>
-              <div class="flex flex-wrap gap-2 text-xs mt-1 mb-3">
+              <div class="flex flex-wrap gap-1.5 text-xs mt-1 mb-3">
                 <span class="font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">RM: ${p.noRm}</span>
                 <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200">${p.dpjp}</span>
+                ${p.tglMrs ? `<span class="bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">MRS: ${formatTanggal(p.tglMrs)}</span>` : ''}
               </div>
               <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-xs text-slate-700 leading-relaxed mb-4">
                 <p class="font-bold text-[10px] uppercase text-slate-400 mb-0.5">Diagnosis (Dx)</p>
@@ -366,7 +466,7 @@
             </div>
           </div>
         </article>
-      `).join('');
+      `}).join('');
     }
   </script>
 </head>
@@ -456,6 +556,7 @@
           <div class="flex flex-wrap gap-2 text-xs mt-1.5">
             <span id="detail-norm" class="font-mono bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded border border-slate-200"></span>
             <span id="detail-dpjp" class="bg-blue-50 text-blue-700 px-2.5 py-0.5 rounded border border-blue-200 font-medium"></span>
+            <span id="detail-mrs" class="bg-purple-50 text-purple-700 px-2.5 py-0.5 rounded border border-purple-200 font-semibold hidden"></span>
           </div>
         </div>
         <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 text-xs text-slate-700 leading-relaxed whitespace-pre-line">
@@ -504,17 +605,23 @@
             <input id="input-dpjp-manual" type="text" placeholder="Ketik nama DPJP Non-Obgyn..." class="hidden mt-2 w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
           </div>
         </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">Tanggal MRS</label>
+            <input id="input-mrs" type="date" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 bg-white focus:outline-emerald-600" />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1">Status Pasien</label>
+            <select id="input-status" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 bg-white">
+              <option value="Aktif Rawat">Aktif Rawat</option>
+              <option value="KRS">KRS (Pulang)</option>
+              <option value="Terhapus">Terhapus</option>
+            </select>
+          </div>
+        </div>
         <div>
           <label class="block text-xs font-bold text-slate-600 mb-1">Diagnosis (Dx)</label>
           <textarea id="input-dx" rows="3" placeholder="Diagnosis dan terapi harian..." class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600"></textarea>
-        </div>
-        <div>
-          <label class="block text-xs font-bold text-slate-600 mb-1">Status Pasien</label>
-          <select id="input-status" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 bg-white">
-            <option value="Aktif Rawat">Aktif Rawat</option>
-            <option value="KRS">KRS (Pulang)</option>
-            <option value="Terhapus">Terhapus</option>
-          </select>
         </div>
         <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
           <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-slate-600 rounded-xl">Batal</button>
