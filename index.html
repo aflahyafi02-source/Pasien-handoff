@@ -20,7 +20,7 @@
       onSnapshot 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    // KUNCI FIREBASE KAMU:
+    // KUNCI FIREBASE:
     const firebaseConfig = {
       apiKey: "AIzaSyDfYW0-lvnz7jgMD6atXV6WiAF0m_p5i_8",
       authDomain: "ward-tracker-9d44f.firebaseapp.com",
@@ -44,6 +44,7 @@
       "dr. Gatut Hardianto, Sp.OG(K)-Urogin Re"
     ];
 
+    let currentUser = null;
     let patients = [];
     let currentStatus = 'Aktif Rawat';
     let currentQuery = '';
@@ -77,6 +78,23 @@
       });
     }
 
+    // Helper untuk format tanggal dan waktu ringkas (contoh: 24 Okt 14:15)
+    function formatTanggalWaktu(val) {
+      if (!val) return '';
+      const d = new Date(val);
+      if (isNaN(d.getTime())) return '';
+      const tgl = d.toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short'
+      });
+      const jam = d.toLocaleTimeString('id-ID', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+      return `${tgl} ${jam}`;
+    }
+
     // Helper untuk menghitung Hari Rawat (Hari ke-1, Hari ke-2, dst.)
     function hitungHariRawat(tglMrs, status, krsAt) {
       if (!tglMrs) return null;
@@ -92,6 +110,233 @@
       return diffDays > 0 ? diffDays : 1;
     }
 
+    // Helper untuk format tulisan kecil audit pembuat / pengedit (Tampilan Kartu)
+    function formatAuditFooter(p) {
+      if (p.createdBy && p.updatedBy && p.createdBy !== p.updatedBy) {
+        return `
+          <div class="flex items-center gap-1 truncate text-slate-400" title="Dibuat oleh ${p.createdBy} (${formatTanggalWaktu(p.createdAt)})">
+            <span class="shrink-0 text-[10px]">✍️</span>
+            <span class="text-slate-500">Dibuat:</span>
+            <span class="font-medium text-slate-700 truncate">${p.createdBy}</span>
+            ${p.createdAt ? `<span class="shrink-0 text-[10px] text-slate-400">(${formatTanggalWaktu(p.createdAt)})</span>` : ''}
+          </div>
+          <div class="flex items-center gap-1 truncate text-slate-400" title="Terakhir diedit oleh ${p.updatedBy} (${formatTanggalWaktu(p.updatedAt)})">
+            <span class="shrink-0 text-[10px]">✏️</span>
+            <span class="text-slate-500">Diedit:</span>
+            <span class="font-medium text-slate-700 truncate">${p.updatedBy}</span>
+            ${p.updatedAt ? `<span class="shrink-0 text-[10px] text-slate-400">(${formatTanggalWaktu(p.updatedAt)})</span>` : ''}
+          </div>
+        `;
+      }
+      if (p.createdBy) {
+        return `
+          <div class="flex items-center gap-1 truncate text-slate-400" title="Dibuat oleh ${p.createdBy} (${formatTanggalWaktu(p.createdAt || p.updatedAt)})">
+            <span class="shrink-0 text-[10px]">✍️</span>
+            <span class="text-slate-500">Oleh:</span>
+            <span class="font-medium text-slate-700 truncate">${p.createdBy}</span>
+            ${(p.createdAt || p.updatedAt) ? `<span class="shrink-0 text-[10px] text-slate-400">(${formatTanggalWaktu(p.createdAt || p.updatedAt)})</span>` : ''}
+          </div>
+        `;
+      }
+      if (p.updatedBy) {
+        return `
+          <div class="flex items-center gap-1 truncate text-slate-400" title="Diedit oleh ${p.updatedBy} (${formatTanggalWaktu(p.updatedAt)})">
+            <span class="shrink-0 text-[10px]">✏️</span>
+            <span class="text-slate-500">Diedit:</span>
+            <span class="font-medium text-slate-700 truncate">${p.updatedBy}</span>
+            ${p.updatedAt ? `<span class="shrink-0 text-[10px] text-slate-400">(${formatTanggalWaktu(p.updatedAt)})</span>` : ''}
+          </div>
+        `;
+      }
+      return `<div class="text-[10px] text-slate-400 italic">Data awal sistem</div>`;
+    }
+
+    // Helper untuk format tulisan kecil audit di Mode List Simple
+    function formatAuditInline(p) {
+      const parts = [];
+      if (p.createdBy) {
+        parts.push(`<span>✍️ <span class="text-slate-500">Oleh:</span> <b class="font-medium text-slate-700">${p.createdBy}</b></span>`);
+      }
+      if (p.updatedBy && p.updatedBy !== p.createdBy) {
+        parts.push(`<span>✏️ <span class="text-slate-500">Diedit:</span> <b class="font-medium text-slate-700">${p.updatedBy}</b> <span class="text-[10px] text-slate-400">(${formatTanggalWaktu(p.updatedAt)})</span></span>`);
+      } else if (!p.createdBy && p.updatedBy) {
+        parts.push(`<span>✏️ <span class="text-slate-500">Diedit:</span> <b class="font-medium text-slate-700">${p.updatedBy}</b> <span class="text-[10px] text-slate-400">(${formatTanggalWaktu(p.updatedAt)})</span></span>`);
+      } else if (p.createdAt || p.updatedAt) {
+        parts.push(`<span class="text-[10px] text-slate-400">(${formatTanggalWaktu(p.createdAt || p.updatedAt)})</span>`);
+      }
+      return parts.length ? parts.join('<span class="text-slate-300 mx-1">•</span>') : '<span class="italic text-slate-400">Data awal</span>';
+    }
+
+    // ==========================================
+    // SISTEM LOGIN & MANAJEMEN PENGGUNA
+    // ==========================================
+    function initAuth() {
+      try {
+        const saved = localStorage.getItem('mawar_current_user');
+        if (saved) {
+          currentUser = JSON.parse(saved);
+          updateUserUI();
+        } else {
+          openLoginModal(true);
+        }
+      } catch (err) {
+        console.error("Gagal membaca user:", err);
+        openLoginModal(true);
+      }
+    }
+
+    window.openLoginModal = function(isForced = false) {
+      const modal = document.getElementById('login-modal');
+      modal.classList.remove('hidden');
+      renderRecentUsers();
+
+      const closeBtn = document.getElementById('login-modal-close');
+      if (closeBtn) {
+        if (currentUser && !isForced) {
+          closeBtn.classList.remove('hidden');
+        } else {
+          closeBtn.classList.add('hidden');
+        }
+      }
+
+      const nameInput = document.getElementById('input-login-name');
+      if (currentUser && !isForced) {
+        nameInput.value = currentUser.name;
+      } else {
+        nameInput.value = '';
+        document.getElementById('input-login-pin').value = '';
+      }
+      setTimeout(() => nameInput.focus(), 150);
+    };
+
+    window.closeLoginModal = function() {
+      if (!currentUser) {
+        alert("Silakan login dengan mengisi nama Anda terlebih dahulu.");
+        return;
+      }
+      document.getElementById('login-modal').classList.add('hidden');
+    };
+
+    window.handleLogin = function(e) {
+      e.preventDefault();
+      const name = document.getElementById('input-login-name').value.trim();
+      const pin = document.getElementById('input-login-pin').value.trim();
+
+      // Validasi PIN Ruangan (default '1234' atau 'mawar', fleksibel agar tim tidak terkunci)
+      if (pin && pin !== '1234' && pin.toLowerCase() !== 'mawar') {
+        alert('PIN Ruangan salah. Silakan gunakan PIN default: 1234');
+        return;
+      }
+
+      if (!name) {
+        alert('Silakan ketik nama dokter / petugas jaga.');
+        return;
+      }
+
+      currentUser = {
+        name: name,
+        loginAt: Date.now()
+      };
+
+      try {
+        localStorage.setItem('mawar_current_user', JSON.stringify(currentUser));
+        saveRecentUser(currentUser);
+      } catch (err) {
+        console.error("Gagal menyimpan ke localStorage:", err);
+      }
+
+      updateUserUI();
+      document.getElementById('login-modal').classList.add('hidden');
+    };
+
+    window.logoutUser = function() {
+      const nama = currentUser ? currentUser.name : 'ini';
+      if (confirm(`Ganti akun atau keluar dari "${nama}"?`)) {
+        currentUser = null;
+        localStorage.removeItem('mawar_current_user');
+        updateUserUI();
+        window.openLoginModal(true);
+      }
+    };
+
+    function saveRecentUser(user) {
+      try {
+        let recents = JSON.parse(localStorage.getItem('mawar_recent_users') || '[]');
+        recents = recents.filter(u => u.name.toLowerCase() !== user.name.toLowerCase());
+        recents.unshift({ name: user.name });
+        if (recents.length > 5) recents = recents.slice(0, 5);
+        localStorage.setItem('mawar_recent_users', JSON.stringify(recents));
+      } catch (err) {}
+    }
+
+    function renderRecentUsers() {
+      try {
+        const recents = JSON.parse(localStorage.getItem('mawar_recent_users') || '[]');
+        const section = document.getElementById('recent-users-section');
+        const container = document.getElementById('recent-users-list');
+        if (!recents || recents.length === 0) {
+          section.classList.add('hidden');
+          return;
+        }
+        section.classList.remove('hidden');
+        container.innerHTML = recents.map(u => {
+          const safeName = u.name.replace(/'/g, "\\'");
+          return `
+            <button type="button" onclick="selectQuickUser('${safeName}')" class="px-2.5 py-1 rounded-lg text-xs bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 border border-slate-200 transition font-medium text-slate-700 flex items-center gap-1.5 cursor-pointer">
+              <span>👤</span> ${u.name}
+            </button>
+          `;
+        }).join('');
+      } catch (err) {}
+    }
+
+    window.selectQuickUser = function(name) {
+      document.getElementById('input-login-name').value = name;
+      document.getElementById('input-login-pin').focus();
+    };
+
+    function updateUserUI() {
+      const avatar = document.getElementById('user-avatar');
+      const nameEl = document.getElementById('user-display-name');
+      const roleEl = document.getElementById('user-display-role');
+      const logoutBtn = document.getElementById('btn-logout');
+      const mobileAvatar = document.getElementById('user-avatar-mobile');
+      const mobileName = document.getElementById('user-display-name-mobile');
+
+      if (currentUser) {
+        const initials = currentUser.name.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'U';
+        if (avatar) {
+          avatar.textContent = initials;
+          avatar.className = 'w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs';
+        }
+        if (nameEl) nameEl.textContent = currentUser.name;
+        if (roleEl) roleEl.textContent = 'Sedang Jaga';
+        if (logoutBtn) logoutBtn.classList.remove('hidden');
+
+        if (mobileAvatar) {
+          mobileAvatar.textContent = initials;
+          mobileAvatar.className = 'w-5 h-5 rounded-md bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold shrink-0';
+        }
+        if (mobileName) {
+          mobileName.textContent = currentUser.name.split(' ')[0] || currentUser.name;
+        }
+      } else {
+        if (avatar) {
+          avatar.textContent = '?';
+          avatar.className = 'w-7 h-7 rounded-lg bg-slate-300 text-slate-600 flex items-center justify-center font-bold text-xs shrink-0';
+        }
+        if (nameEl) nameEl.textContent = 'Belum Login';
+        if (roleEl) roleEl.textContent = 'Klik untuk Masuk';
+        if (logoutBtn) logoutBtn.classList.add('hidden');
+
+        if (mobileAvatar) {
+          mobileAvatar.textContent = '?';
+          mobileAvatar.className = 'w-5 h-5 rounded-md bg-slate-300 text-slate-600 flex items-center justify-center text-[10px] font-bold shrink-0';
+        }
+        if (mobileName) mobileName.textContent = 'Login';
+      }
+    }
+
     // Listener Real-Time: Perubahan di HP langsung update di PC secara instan
     onSnapshot(colRef, (snapshot) => {
       patients = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -99,7 +344,7 @@
       const badge = document.getElementById('sync-indicator');
       if (badge) {
         badge.textContent = 'Live Synced';
-        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+        badge.className = 'px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
       }
       render();
     }, (err) => {
@@ -107,7 +352,7 @@
       const badge = document.getElementById('sync-indicator');
       if (badge) {
         badge.textContent = 'Gagal Sync';
-        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-700 border border-red-200';
+        badge.className = 'px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-700 border border-red-200';
       }
     });
 
@@ -125,8 +370,13 @@
 
     window.savePatient = async function(e) {
       e.preventDefault();
+      if (!currentUser) {
+        alert("Silakan login terlebih dahulu untuk menyimpan data.");
+        window.openLoginModal(true);
+        return;
+      }
+
       const id = document.getElementById('edit-id').value;
-      
       const selectedDpjp = document.getElementById('select-dpjp').value;
       const manualDpjp = document.getElementById('input-dpjp-manual').value.trim();
       const finalDpjp = selectedDpjp === 'MANUAL' ? (manualDpjp || 'DPJP Umum') : (selectedDpjp || 'DPJP Umum');
@@ -143,7 +393,8 @@
         tglMrs: tglMrsVal,
         diagnosis: document.getElementById('input-dx').value.trim() || '-',
         status: statusVal,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        updatedBy: currentUser.name
       };
 
       // Set tanggal KRS jika status diubah jadi KRS lewat form
@@ -155,9 +406,20 @@
 
       try {
         if (id) {
+          // Pertahankan pencatat awal jika sudah ada
+          if (existingPatient && existingPatient.createdBy) {
+            data.createdBy = existingPatient.createdBy;
+          }
+          if (existingPatient && existingPatient.createdAt) {
+            data.createdAt = existingPatient.createdAt;
+          }
           await updateDoc(doc(db, "ward_patients", id), data);
         } else {
-          await addDoc(colRef, { ...data, createdAt: Date.now() });
+          await addDoc(colRef, { 
+            ...data, 
+            createdBy: currentUser.name,
+            createdAt: Date.now() 
+          });
         }
         closeModal();
       } catch (error) {
@@ -165,8 +427,14 @@
       }
     };
 
-    // Konfirmasi KRS & Simpan Tanggal KRS
+    // Konfirmasi KRS & Simpan Tanggal KRS serta Pengedit
     window.toggleStatus = async function(id, current) {
+      if (!currentUser) {
+        alert("Silakan login terlebih dahulu untuk mengubah status.");
+        window.openLoginModal(true);
+        return false;
+      }
+
       const p = patients.find(item => item.id === id);
       const namaPasien = p ? p.nama : 'ini';
 
@@ -177,7 +445,8 @@
         await updateDoc(doc(db, "ward_patients", id), { 
           status: 'KRS', 
           krsAt: Date.now(),
-          updatedAt: Date.now() 
+          updatedAt: Date.now(),
+          updatedBy: currentUser.name
         });
       } else {
         if (!confirm(`Aktifkan kembali status rawat inap untuk pasien "${namaPasien}"?`)) {
@@ -186,7 +455,8 @@
         await updateDoc(doc(db, "ward_patients", id), { 
           status: 'Aktif Rawat', 
           krsAt: null,
-          updatedAt: Date.now() 
+          updatedAt: Date.now(),
+          updatedBy: currentUser.name
         });
       }
       return true;
@@ -194,25 +464,46 @@
 
     // Pindahkan ke daftar Terhapus (Soft Delete)
     window.deletePatient = async function(id) {
+      if (!currentUser) {
+        alert("Silakan login terlebih dahulu untuk menghapus data.");
+        window.openLoginModal(true);
+        return;
+      }
+
       if (confirm('Pindahkan data pasien ini ke daftar Terhapus?')) {
         await updateDoc(doc(db, "ward_patients", id), {
           status: 'Terhapus',
           deletedAt: Date.now(),
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
+          updatedBy: currentUser.name,
+          deletedBy: currentUser.name
         });
       }
     };
 
     // Pulihkan pasien dari daftar Terhapus ke Aktif Rawat
     window.restorePatient = async function(id) {
+      if (!currentUser) {
+        alert("Silakan login terlebih dahulu untuk memulihkan data.");
+        window.openLoginModal(true);
+        return;
+      }
+
       await updateDoc(doc(db, "ward_patients", id), {
         status: 'Aktif Rawat',
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        updatedBy: currentUser.name
       });
     };
 
     // Hapus permanen dari database Firebase
     window.permanentDeletePatient = async function(id) {
+      if (!currentUser) {
+        alert("Silakan login terlebih dahulu.");
+        window.openLoginModal(true);
+        return;
+      }
+
       if (confirm('Hapus PERMANEN data pasien ini dari database? Tindakan ini tidak bisa dibatalkan.')) {
         await deleteDoc(doc(db, "ward_patients", id));
       }
@@ -266,6 +557,20 @@
       document.getElementById('detail-dpjp').textContent = p.dpjp;
       document.getElementById('detail-dx').textContent = p.diagnosis || '-';
 
+      // Audit info di modal detail
+      const createdEl = document.getElementById('detail-created');
+      const updatedEl = document.getElementById('detail-updated');
+      if (createdEl) {
+        createdEl.textContent = p.createdBy 
+          ? `${p.createdBy} ${p.createdAt ? '• ' + formatTanggalWaktu(p.createdAt) : ''}`
+          : 'Data awal sistem';
+      }
+      if (updatedEl) {
+        updatedEl.textContent = p.updatedBy 
+          ? `${p.updatedBy} ${p.updatedAt ? '• ' + formatTanggalWaktu(p.updatedAt) : ''}`
+          : (p.updatedAt ? formatTanggalWaktu(p.updatedAt) : '-');
+      }
+
       const mrsBadge = document.getElementById('detail-mrs');
       if (p.tglMrs) {
         mrsBadge.textContent = `MRS: ${formatTanggal(p.tglMrs)} (${ p.status === 'KRS' ? `Rawat ${hariRawat} hari` : `Hari ke-${hariRawat}` })`;
@@ -283,15 +588,15 @@
       const actionsDiv = document.getElementById('detail-actions');
       if (p.status === 'Terhapus') {
         actionsDiv.innerHTML = `
-          <button onclick="restorePatient('${p.id}'); closeDetailModal();" class="flex-1 py-2 px-3 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700">Pulihkan Pasien</button>
-          <button onclick="permanentDeletePatient('${p.id}'); closeDetailModal();" class="py-2 px-3 rounded-xl text-xs font-bold bg-red-50 text-red-600 border border-red-200 hover:bg-red-600 hover:text-white">Hapus Permanen</button>
+          <button onclick="restorePatient('${p.id}'); closeDetailModal();" class="flex-1 py-2 px-3 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer">Pulihkan Pasien</button>
+          <button onclick="permanentDeletePatient('${p.id}'); closeDetailModal();" class="py-2 px-3 rounded-xl text-xs font-bold bg-red-50 text-red-600 border border-red-200 hover:bg-red-600 hover:text-white cursor-pointer">Hapus Permanen</button>
         `;
       } else {
         actionsDiv.innerHTML = `
-          <button onclick="toggleStatus('${p.id}', '${p.status}').then(ok => { if(ok) closeDetailModal(); })" class="flex-1 py-2 px-3 rounded-xl text-xs font-semibold border ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
+          <button onclick="toggleStatus('${p.id}', '${p.status}').then(ok => { if(ok) closeDetailModal(); })" class="flex-1 py-2 px-3 rounded-xl text-xs font-semibold border cursor-pointer ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
             ${p.status === 'Aktif Rawat' ? 'Tandai KRS' : 'Aktifkan Kembali'}
           </button>
-          <button onclick="closeDetailModal(); openModal('${p.id}');" class="py-2 px-4 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-600 hover:text-white">Edit Data</button>
+          <button onclick="closeDetailModal(); openModal('${p.id}');" class="py-2 px-4 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-600 hover:text-white cursor-pointer">Edit Data</button>
         `;
       }
 
@@ -303,6 +608,12 @@
     };
 
     window.openModal = function(id = null) {
+      if (!currentUser) {
+        alert("Silakan login terlebih dahulu untuk menambah atau mengedit data.");
+        window.openLoginModal(true);
+        return;
+      }
+
       document.getElementById('modal').classList.remove('hidden');
       const selectDpjp = document.getElementById('select-dpjp');
       const manualDpjp = document.getElementById('input-dpjp-manual');
@@ -348,7 +659,8 @@
       const active = patients.filter(p => p.status === 'Aktif Rawat');
       if (active.length === 0) return alert('Tidak ada pasien aktif untuk operan.');
       
-      let text = `*OPERAN JAGA BANGSAL RAWAT INAP*\nTotal Pasien Aktif: ${active.length}\n------------------------------\n`;
+      const pelapor = currentUser ? `\nPetugas Jaga: ${currentUser.name}\n` : '';
+      let text = `*OPERAN JAGA BANGSAL RAWAT INAP*${pelapor}Total Pasien Aktif: ${active.length}\n------------------------------\n`;
       active.forEach((p, idx) => {
         const hari = hitungHariRawat(p.tglMrs, p.status, p.krsAt);
         const infoMrs = p.tglMrs ? ` (MRS: ${formatTanggal(p.tglMrs)} • Hari ke-${hari})` : '';
@@ -390,28 +702,34 @@
         return;
       }
 
-      // TAMPILAN MODE LIST SIMPLE (Ruangan, Nama, RM, DPJP + Hari Rawat / Tanggal KRS)
+      // TAMPILAN MODE LIST SIMPLE (Ruangan, Nama, RM, DPJP + Hari Rawat / Tanggal KRS + Info Pembuat/Pengedit)
       if (viewMode === 'list') {
         grid.className = "flex flex-col gap-2";
         grid.innerHTML = filtered.map(p => {
           const hariRawat = hitungHariRawat(p.tglMrs, p.status, p.krsAt);
           return `
           <div onclick="openDetailModal('${p.id}')" class="cursor-pointer bg-white rounded-xl border border-slate-200 px-4 py-3 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 hover:border-emerald-400 hover:bg-emerald-50/20 transition">
-            <div class="flex flex-wrap items-center gap-2 min-w-0 flex-1">
-              <span class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold shrink-0">${p.kamar}</span>
-              <h3 class="text-sm font-bold text-slate-900 truncate">${p.nama}</h3>
-              <span class="font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200 text-xs shrink-0">RM: ${p.noRm}</span>
-              <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 text-xs shrink-0">${p.dpjp}</span>
-              ${hariRawat && p.status === 'Aktif Rawat' ? `<span class="bg-purple-50 text-purple-700 px-2 py-0.5 rounded border border-purple-200 text-xs font-semibold shrink-0">Hari ke-${hariRawat}</span>` : ''}
-              ${p.status === 'KRS' && p.krsAt ? `<span class="bg-amber-50 text-amber-700 px-2 py-0.5 rounded border border-amber-200 text-xs font-medium shrink-0">🗓️ KRS: ${formatTanggal(p.krsAt)}${hariRawat ? ` (${hariRawat} hr)` : ''}</span>` : ''}
+            <div class="flex flex-col gap-1 min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2 min-w-0">
+                <span class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold shrink-0">${p.kamar}</span>
+                <h3 class="text-sm font-bold text-slate-900 truncate">${p.nama}</h3>
+                <span class="font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200 text-xs shrink-0">RM: ${p.noRm}</span>
+                <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 text-xs shrink-0">${p.dpjp}</span>
+                ${hariRawat && p.status === 'Aktif Rawat' ? `<span class="bg-purple-50 text-purple-700 px-2 py-0.5 rounded border border-purple-200 text-xs font-semibold shrink-0">Hari ke-${hariRawat}</span>` : ''}
+                ${p.status === 'KRS' && p.krsAt ? `<span class="bg-amber-50 text-amber-700 px-2 py-0.5 rounded border border-amber-200 text-xs font-medium shrink-0">🗓️ KRS: ${formatTanggal(p.krsAt)}${hariRawat ? ` (${hariRawat} hr)` : ''}</span>` : ''}
+              </div>
+              <!-- Tulisan kecil pembuat / pengedit -->
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-400 pl-0.5">
+                ${formatAuditInline(p)}
+              </div>
             </div>
             <div class="flex items-center justify-end gap-2 shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100" onclick="event.stopPropagation()">
               ${p.status === 'Terhapus' ? `
-                <button onclick="restorePatient('${p.id}')" class="py-1 px-2.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white">Pulihkan</button>
-                <button onclick="permanentDeletePatient('${p.id}')" class="p-1 text-red-500 hover:text-red-700 text-xs font-bold">Hapus Permanen</button>
+                <button onclick="restorePatient('${p.id}')" class="py-1 px-2.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white cursor-pointer">Pulihkan</button>
+                <button onclick="permanentDeletePatient('${p.id}')" class="p-1 text-red-500 hover:text-red-700 text-xs font-bold cursor-pointer">Hapus Permanen</button>
               ` : `
-                <button onclick="openModal('${p.id}')" class="p-1 text-slate-500 hover:text-blue-600 text-xs font-bold">Edit</button>
-                <button onclick="deletePatient('${p.id}')" class="p-1 text-slate-400 hover:text-red-600 text-xs font-bold">Hapus</button>
+                <button onclick="openModal('${p.id}')" class="p-1 text-slate-500 hover:text-blue-600 text-xs font-bold cursor-pointer">Edit</button>
+                <button onclick="deletePatient('${p.id}')" class="p-1 text-slate-400 hover:text-red-600 text-xs font-bold cursor-pointer">Hapus</button>
               `}
             </div>
           </div>
@@ -443,79 +761,108 @@
                 <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200">${p.dpjp}</span>
                 ${p.tglMrs ? `<span class="bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">MRS: ${formatTanggal(p.tglMrs)}</span>` : ''}
               </div>
-              <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-xs text-slate-700 leading-relaxed mb-4">
+              <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-xs text-slate-700 leading-relaxed mb-3">
                 <p class="font-bold text-[10px] uppercase text-slate-400 mb-0.5">Diagnosis (Dx)</p>
                 ${p.diagnosis}
+              </div>
+              <!-- Tulisan kecil di bawah diagnosis: Siapa yang membuat / mengedit -->
+              <div class="pt-2 pb-1 border-t border-slate-100/80 text-[11px] text-slate-400 flex flex-col gap-0.5 leading-tight">
+                ${formatAuditFooter(p)}
               </div>
             </div>
             <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
               ${p.status === 'Terhapus' ? `
-                <button onclick="restorePatient('${p.id}')" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white">
+                <button onclick="restorePatient('${p.id}')" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white cursor-pointer">
                   Pulihkan Pasien
                 </button>
-                <button onclick="permanentDeletePatient('${p.id}')" class="py-1.5 px-2.5 rounded-xl bg-red-50 text-red-600 hover:bg-red-600 hover:text-white text-xs font-bold border border-red-200">
+                <button onclick="permanentDeletePatient('${p.id}')" class="py-1.5 px-2.5 rounded-xl bg-red-50 text-red-600 hover:bg-red-600 hover:text-white text-xs font-bold border border-red-200 cursor-pointer">
                   Hapus Permanen
                 </button>
               ` : `
-                <button onclick="toggleStatus('${p.id}', '${p.status}')" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold border ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
+                <button onclick="toggleStatus('${p.id}', '${p.status}')" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold border cursor-pointer ${p.status === 'Aktif Rawat' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}">
                   ${p.status === 'Aktif Rawat' ? 'Tandai KRS' : 'Aktifkan Kembali'}
                 </button>
-                <button onclick="openModal('${p.id}')" class="p-1.5 text-slate-500 hover:text-blue-600 text-xs font-bold">Edit</button>
-                <button onclick="deletePatient('${p.id}')" class="p-1.5 text-slate-400 hover:text-red-600 text-xs font-bold">Hapus</button>
+                <button onclick="openModal('${p.id}')" class="p-1.5 text-slate-500 hover:text-blue-600 text-xs font-bold cursor-pointer">Edit</button>
+                <button onclick="deletePatient('${p.id}')" class="p-1.5 text-slate-400 hover:text-red-600 text-xs font-bold cursor-pointer">Hapus</button>
               `}
             </div>
           </div>
         </article>
       `}).join('');
     }
+
+    // Inisialisasi status user saat halaman pertama kali dibuka
+    initAuth();
   </script>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
 
+  <!-- Header Utama -->
   <header class="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 shadow-xs">
-    <div class="max-w-7xl mx-auto px-4 py-3.5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-      <!-- Sisi Kiri: Logo & Tajuk -->
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-xl shadow-xs">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <!-- Sisi Kiri: Logo & Tajuk + Info User Mobile -->
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2.5">
+          <div class="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-xl shadow-xs shrink-0">
             🌹
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h1 class="text-lg font-bold text-slate-900">List Pasien Mawar</h1>
-              <span id="sync-indicator" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Live Synced</span>
+              <h1 class="text-base sm:text-lg font-bold text-slate-900 leading-tight">List Pasien Mawar</h1>
+              <span id="sync-indicator" class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">Live Synced</span>
             </div>
-            <p class="text-xs text-slate-500">Tracking & Operan Jaga Rawat Inap by DM Obgyn</p>
+            <p class="text-xs text-slate-500 hidden sm:block">Tracking & Operan Jaga Rawat Inap by DM Obgyn</p>
           </div>
         </div>
-        <button onclick="openModal()" class="md:hidden bg-emerald-600 text-white font-semibold text-xs px-3 py-2 rounded-xl">
-          + Pasien
-        </button>
+
+        <!-- Tombol Mobile: User Widget & Tambah Pasien -->
+        <div class="flex items-center gap-1.5 md:hidden">
+          <button onclick="openLoginModal()" class="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-2 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 transition cursor-pointer" title="Ganti User">
+            <span id="user-avatar-mobile" class="w-5 h-5 rounded-md bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold shrink-0">?</span>
+            <span id="user-display-name-mobile" class="max-w-[70px] truncate text-[11px]">Login</span>
+          </button>
+          <button onclick="openModal()" class="bg-emerald-600 text-white font-semibold text-xs px-2.5 py-1.5 rounded-xl shadow-xs cursor-pointer">
+            + Pasien
+          </button>
+        </div>
       </div>
 
-      <!-- Sisi Kanan: Tab Aktif/KRS/Terhapus & Butang Tindakan -->
+      <!-- Sisi Kanan: Tab Aktif/KRS/Terhapus, User Profile (Desktop), Salin Operan & Tambah Pasien -->
       <div class="flex flex-wrap items-center gap-2">
         <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-medium">
-          <button onclick="setStatusFilter('Aktif Rawat')" id="tab-aktif" class="px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs">
+          <button onclick="setStatusFilter('Aktif Rawat')" id="tab-aktif" class="px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs cursor-pointer">
             Aktif: <span id="count-aktif">0</span>
           </button>
-          <button onclick="setStatusFilter('KRS')" id="tab-krs" class="px-3 py-1.5 rounded-lg text-slate-600">
+          <button onclick="setStatusFilter('KRS')" id="tab-krs" class="px-3 py-1.5 rounded-lg text-slate-600 cursor-pointer">
             KRS: <span id="count-krs">0</span>
           </button>
-          <button onclick="setStatusFilter('Terhapus')" id="tab-deleted" class="px-3 py-1.5 rounded-lg text-slate-600">
+          <button onclick="setStatusFilter('Terhapus')" id="tab-deleted" class="px-3 py-1.5 rounded-lg text-slate-600 cursor-pointer">
             Terhapus: <span id="count-deleted">0</span>
           </button>
         </div>
-        <button onclick="copyHandoff()" class="px-3 py-2 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl shadow-xs">
-          Salin Operan
+
+        <button onclick="copyHandoff()" class="px-3 py-2 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl shadow-xs cursor-pointer flex items-center gap-1">
+          <span>📋</span> Salin Operan
         </button>
-        <button onclick="openModal()" class="hidden md:inline-flex bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs">
+
+        <!-- User Info Widget Desktop -->
+        <div onclick="openLoginModal()" class="hidden md:flex items-center gap-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 py-1.5 px-3 rounded-xl text-xs cursor-pointer transition select-none" title="Klik untuk ganti pengguna atau keluar">
+          <div id="user-avatar" class="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">?</div>
+          <div class="text-left">
+            <div class="font-bold text-slate-800 leading-tight truncate max-w-[120px]" id="user-display-name">Belum Login</div>
+            <div class="text-[10px] text-slate-500 leading-tight" id="user-display-role">Klik untuk Masuk</div>
+          </div>
+          <button type="button" onclick="event.stopPropagation(); logoutUser();" id="btn-logout" class="hidden text-slate-400 hover:text-red-600 ml-1 p-0.5 rounded text-xs font-bold" title="Ganti Pengguna / Logout">⎋</button>
+        </div>
+
+        <button onclick="openModal()" class="hidden md:inline-flex bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-xs cursor-pointer">
           + Tambah Pasien
         </button>
       </div>
     </div>
   </header>
 
+  <!-- Filter & Pencarian -->
   <section class="bg-white border-b border-slate-200 py-3">
     <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center gap-2.5">
       <input id="search-input" type="text" oninput="handleSearch(this.value)" placeholder="Cari pasien, No. RM, kamar, atau diagnosis..." class="w-full sm:flex-1 px-3.5 py-2 bg-slate-50 text-sm rounded-xl border border-slate-200 focus:outline-emerald-500" />
@@ -525,10 +872,10 @@
         </select>
         <!-- Toggle Mode Tampilan: Kartu vs List -->
         <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-medium shrink-0">
-          <button onclick="setViewMode('grid')" id="btn-view-grid" class="px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs flex items-center gap-1">
+          <button onclick="setViewMode('grid')" id="btn-view-grid" class="px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs flex items-center gap-1 cursor-pointer">
             <span>▦</span> Kartu
           </button>
-          <button onclick="setViewMode('list')" id="btn-view-list" class="px-3 py-1.5 rounded-lg text-slate-600 flex items-center gap-1">
+          <button onclick="setViewMode('list')" id="btn-view-list" class="px-3 py-1.5 rounded-lg text-slate-600 flex items-center gap-1 cursor-pointer">
             <span>☰</span> List
           </button>
         </div>
@@ -536,6 +883,7 @@
     </div>
   </section>
 
+  <!-- Grid Utama Pasien -->
   <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
     <div id="patient-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
   </main>
@@ -548,7 +896,7 @@
           <span id="detail-kamar" class="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold"></span>
           <span id="detail-status" class="px-2.5 py-0.5 rounded-full text-xs font-semibold"></span>
         </div>
-        <button onclick="closeDetailModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold leading-none">&times;</button>
+        <button onclick="closeDetailModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold leading-none cursor-pointer">&times;</button>
       </div>
       <div class="p-5 space-y-4">
         <div>
@@ -563,6 +911,17 @@
           <p class="font-bold text-[10px] uppercase text-slate-400 mb-1">Diagnosis (Dx) & Terapi</p>
           <div id="detail-dx"></div>
         </div>
+        <!-- Riwayat Pembuat & Terakhir Mengedit -->
+        <div class="bg-slate-50 border border-slate-200/80 rounded-xl p-3 text-xs text-slate-600 space-y-1.5">
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">✍️ Dibuat oleh:</span>
+            <span id="detail-created" class="font-medium text-slate-800">-</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">✏️ Terakhir diedit:</span>
+            <span id="detail-updated" class="font-medium text-slate-800">-</span>
+          </div>
+        </div>
         <div id="detail-actions" class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2"></div>
       </div>
     </div>
@@ -573,7 +932,7 @@
     <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden">
       <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50">
         <h2 id="modal-title" class="text-base font-bold text-slate-900">Input Pasien Baru</h2>
-        <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold">&times;</button>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold cursor-pointer">&times;</button>
       </div>
       <form id="patient-form" onsubmit="savePatient(event)" class="p-5 space-y-4">
         <input type="hidden" id="edit-id" />
@@ -624,11 +983,51 @@
           <textarea id="input-dx" rows="3" placeholder="Diagnosis dan terapi harian..." class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600"></textarea>
         </div>
         <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
-          <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-slate-600 rounded-xl">Batal</button>
-          <button type="submit" class="px-5 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl">Simpan</button>
+          <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-slate-600 rounded-xl cursor-pointer">Batal</button>
+          <button type="submit" class="px-5 py-2 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl cursor-pointer">Simpan</button>
         </div>
       </form>
     </div>
   </div>
+
+  <!-- Modal Login Petugas / Dokter -->
+  <div id="login-modal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden relative">
+      <button id="login-modal-close" onclick="closeLoginModal()" class="hidden absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-2xl font-bold leading-none cursor-pointer">&times;</button>
+      <div class="p-6 text-center border-b border-slate-100 bg-emerald-50/50">
+        <div class="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center text-3xl mx-auto mb-3 shadow-xs">
+          🌹
+        </div>
+        <h2 class="text-lg font-bold text-slate-900">Login Petugas Jaga</h2>
+        <p class="text-xs text-slate-500 mt-1">Identitas Anda akan tercatat otomatis saat menambah atau mengedit data pasien</p>
+      </div>
+
+      <form id="login-form" onsubmit="handleLogin(event)" class="p-6 space-y-4">
+        <!-- Pilihan Cepat Akun Sebelumnya -->
+        <div id="recent-users-section" class="hidden">
+          <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Pilih Cepat Pengguna Sebelumnya:</label>
+          <div id="recent-users-list" class="flex flex-wrap gap-1.5"></div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">Nama Dokter / Petugas *</label>
+          <input id="input-login-name" required type="text" placeholder="Contoh: dr. Sarah / DM Budi" class="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">PIN Ruangan</label>
+          <input id="input-login-pin" type="password" placeholder="1234" class="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
+          <p class="text-[11px] text-slate-400 mt-1.5">💡 PIN default ruangan: <span class="font-mono font-bold text-slate-600">1234</span> (atau password mawar).</p>
+        </div>
+
+        <div class="pt-2">
+          <button type="submit" class="w-full py-2.5 px-4 rounded-xl text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition cursor-pointer">
+            Masuk / Mulai Jaga
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
 </body>
 </html>
