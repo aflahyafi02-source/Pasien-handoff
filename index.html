@@ -224,7 +224,7 @@
 
       // Validasi PIN Ruangan (default '1234' atau 'mawar', fleksibel agar tim tidak terkunci)
       if (pin && pin !== '1234' && pin.toLowerCase() !== 'mawar') {
-        alert('PIN Ruangan salah. Silakan gunakan PIN default: 1234');
+        alert('PIN Ruangan salah.');
         return;
       }
 
@@ -392,9 +392,7 @@
         dpjp: finalDpjp,
         tglMrs: tglMrsVal,
         diagnosis: document.getElementById('input-dx').value.trim() || '-',
-        status: statusVal,
-        updatedAt: Date.now(),
-        updatedBy: currentUser.name
+        status: statusVal
       };
 
       // Set tanggal KRS jika status diubah jadi KRS lewat form
@@ -405,20 +403,44 @@
       }
 
       try {
-        if (id) {
+        if (id && existingPatient) {
+          // Cek apakah ada perubahan data dibanding data sebelumnya
+          const isNamaChanged = data.nama !== (existingPatient.nama || '').trim();
+          const isNoRmChanged = data.noRm !== (existingPatient.noRm || '').trim();
+          const isKamarChanged = data.kamar !== (existingPatient.kamar || '').trim();
+          const isDpjpChanged = data.dpjp !== (existingPatient.dpjp || '').trim();
+          const isTglMrsChanged = (data.tglMrs || '') !== (existingPatient.tglMrs || '');
+          const isDiagnosisChanged = (data.diagnosis || '-').trim() !== (existingPatient.diagnosis || '-').trim();
+          const isStatusChanged = data.status !== (existingPatient.status || 'Aktif Rawat');
+
+          const hasChanges = isNamaChanged || isNoRmChanged || isKamarChanged || isDpjpChanged || isTglMrsChanged || isDiagnosisChanged || isStatusChanged;
+
+          if (!hasChanges) {
+            // Jika tidak ada tulisan yang dirubah, jangan rubah pembuat atau pengeditnya
+            closeModal();
+            return;
+          }
+
+          // Jika ada perubahan, perbarui pengedit dan waktu update
+          data.updatedBy = currentUser.name;
+          data.updatedAt = Date.now();
+
           // Pertahankan pencatat awal jika sudah ada
-          if (existingPatient && existingPatient.createdBy) {
+          if (existingPatient.createdBy) {
             data.createdBy = existingPatient.createdBy;
           }
-          if (existingPatient && existingPatient.createdAt) {
+          if (existingPatient.createdAt) {
             data.createdAt = existingPatient.createdAt;
           }
           await updateDoc(doc(db, "ward_patients", id), data);
         } else {
+          // Data pasien baru
           await addDoc(colRef, { 
             ...data, 
             createdBy: currentUser.name,
-            createdAt: Date.now() 
+            createdAt: Date.now(),
+            updatedBy: currentUser.name,
+            updatedAt: Date.now()
           });
         }
         closeModal();
@@ -1011,13 +1033,12 @@
 
         <div>
           <label class="block text-xs font-bold text-slate-700 mb-1">Nama Dokter / Petugas *</label>
-          <input id="input-login-name" required type="text" placeholder="Contoh: dr. Sarah / DM Budi" class="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
+          <input id="input-login-name" required type="text" placeholder="Contoh: DM yafi" class="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
         </div>
 
         <div>
           <label class="block text-xs font-bold text-slate-700 mb-1">PIN Ruangan</label>
-          <input id="input-login-pin" type="password" placeholder="1234" class="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
-          <p class="text-[11px] text-slate-400 mt-1.5">💡 PIN default ruangan: <span class="font-mono font-bold text-slate-600">1234</span> (atau password mawar).</p>
+          <input id="input-login-pin" type="password" placeholder="Masukkan PIN Ruangan" class="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-emerald-600" />
         </div>
 
         <div class="pt-2">
