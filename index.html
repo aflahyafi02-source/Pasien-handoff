@@ -172,7 +172,11 @@
     // ==========================================
     function initAuth() {
       try {
-        const saved = localStorage.getItem('mawar_current_user');
+        // Hapus token persisten lama di localStorage jika ada
+        localStorage.removeItem('mawar_current_user');
+
+        // Gunakan sessionStorage agar saat keluar dari web/aplikasi otomatis logout
+        const saved = sessionStorage.getItem('mawar_current_user');
         if (saved) {
           currentUser = JSON.parse(saved);
           updateUserUI();
@@ -239,10 +243,12 @@
       };
 
       try {
-        localStorage.setItem('mawar_current_user', JSON.stringify(currentUser));
+        // Simpan hanya di sessionStorage agar saat tab/browser/app ditutup langsung logout
+        sessionStorage.setItem('mawar_current_user', JSON.stringify(currentUser));
+        localStorage.removeItem('mawar_current_user');
         saveRecentUser(currentUser);
       } catch (err) {
-        console.error("Gagal menyimpan ke localStorage:", err);
+        console.error("Gagal menyimpan ke sessionStorage:", err);
       }
 
       updateUserUI();
@@ -253,6 +259,7 @@
       const nama = currentUser ? currentUser.name : 'ini';
       if (confirm(`Ganti akun atau keluar dari "${nama}"?`)) {
         currentUser = null;
+        sessionStorage.removeItem('mawar_current_user');
         localStorage.removeItem('mawar_current_user');
         updateUserUI();
         window.openLoginModal(true);
