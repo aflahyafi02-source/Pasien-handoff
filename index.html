@@ -124,6 +124,15 @@
       return isNaN(t) ? Infinity : t;
     }
 
+    // Helper untuk mendapatkan timestamp KRS guna sortir otomatis (paling kini ke paling lalu)
+    function getKrsTimestamp(p) {
+      const val = p.krsAt || p.updatedAt || p.createdAt;
+      if (!val) return 0;
+      if (typeof val === 'number') return val;
+      const t = new Date(val).getTime();
+      return isNaN(t) ? 0 : t;
+    }
+
     // Helper untuk sortir daftar pasien:
     // 'kamar'  : Pasien berdasarkan nomor kamar/bed (jika kamar sama, urutkan MRS paling lama)
     // 'mrs-asc': Pasien yang paling lama dirawat ke yang paling awal masuk (MRS terlama di atas)
@@ -760,24 +769,50 @@
       dpjpSelect.innerHTML = '<option value="Semua">Semua DPJP</option>' + 
         dpjpList.map(d => `<option value="${d}" ${d === currentSelected ? 'selected' : ''}>${d}</option>`).join('');
 
-      // Sinkronkan pilihan dropdown sortir dengan state
+      // Pengaturan sortir: Bagian KRS diurutkan otomatis (paling kini ke paling lalu) tanpa opsi dropdown
       const sortSelect = document.getElementById('filter-sort');
-      if (sortSelect && sortSelect.value !== currentSort) {
-        sortSelect.value = currentSort;
+      const krsBadge = document.getElementById('krs-sort-badge');
+      if (sortSelect) {
+        if (currentStatus === 'KRS') {
+          sortSelect.classList.add('hidden');
+          if (krsBadge) {
+            krsBadge.classList.remove('hidden');
+            krsBadge.classList.add('inline-flex');
+          }
+        } else {
+          sortSelect.classList.remove('hidden');
+          if (krsBadge) {
+            krsBadge.classList.add('hidden');
+            krsBadge.classList.remove('inline-flex');
+          }
+          if (sortSelect.value !== currentSort) {
+            sortSelect.value = currentSort;
+          }
+        }
       }
 
-      const filtered = sortPatientsList(
-        patients.filter(p => {
-          if (p.status !== currentStatus) return false;
-          if (currentDpjp !== 'Semua' && p.dpjp !== currentDpjp) return false;
-          if (currentQuery) {
-            const match = (p.nama + p.noRm + p.kamar + p.diagnosis + p.dpjp).toLowerCase();
-            return match.includes(currentQuery);
-          }
-          return true;
-        }),
-        currentSort
-      );
+      const rawFiltered = patients.filter(p => {
+        if (p.status !== currentStatus) return false;
+        if (currentDpjp !== 'Semua' && p.dpjp !== currentDpjp) return false;
+        if (currentQuery) {
+          const match = (p.nama + p.noRm + p.kamar + p.diagnosis + p.dpjp).toLowerCase();
+          return match.includes(currentQuery);
+        }
+        return true;
+      });
+
+      let filtered;
+      if (currentStatus === 'KRS') {
+        // Otomatis urutkan dari tanggal paling kini KRS sampai paling lalu
+        filtered = [...rawFiltered].sort((a, b) => {
+          const tA = getKrsTimestamp(a);
+          const tB = getKrsTimestamp(b);
+          if (tB !== tA) return tB - tA; // Paling kini (terbaru) di atas
+          return (a.kamar || '').localeCompare(b.kamar || '', undefined, { numeric: true });
+        });
+      } else {
+        filtered = sortPatientsList(rawFiltered, currentSort);
+      }
 
       const grid = document.getElementById('patient-grid');
       if (filtered.length === 0) {
@@ -958,6 +993,9 @@
           <option value="kamar">🚪 Berdasarkan Kamar</option>
           <option value="mrs-asc">🗓️ Pasien Paling Lama (MRS)</option>
         </select>
+        <span id="krs-sort-badge" class="hidden px-3 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-xs font-semibold items-center gap-1.5 select-none" title="Urutan otomatis KRS">
+          <span>🗓️</span> <span>Urut: KRS Paling Kini → Lalu</span>
+        </span>
         <!-- Toggle Mode Tampilan: Kartu vs List -->
         <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-medium shrink-0">
           <button onclick="setViewMode('grid')" id="btn-view-grid" class="px-3 py-1.5 rounded-lg bg-white text-emerald-700 font-bold shadow-xs flex items-center gap-1 cursor-pointer">
